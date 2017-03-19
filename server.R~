@@ -1,0 +1,2147 @@
+#########Libraries##########
+library(shiny)
+library(rhandsontable)
+library(data.table)
+library(shinydashboard)
+library(rCharts)
+library(forecast)
+library(reshape2)
+library(MAPA)
+library(tsoutliers)
+library(RMySQL)
+library(rmarkdown)
+library(tsintermittent)
+library(stats)
+library(tufte)
+library(RJSONIO)
+
+source("PreForecast.R")
+source("Forecast.R")
+source("ForecastInter.R")
+source("PreForecastSm.R")
+source("ForecastSm.R")
+source("PreForecastTa.R")
+source("ForecastTa.R")
+source("ExpandTa.R")
+source("Smooth.R")
+source("DecomposeC.R")
+source("Outliers.R")
+source("findppy.R")
+source("SeasonalityTest.R")
+source("ThetaClassic.R")
+source("ErrorsCalculations.R")
+source("smoothwmethod.R")
+source("tempag.R")
+
+
+
+`%then%` <- shiny:::`%OR%`
+
+##########Shiny server.R##########
+shinyServer(function(input, output, session) { 
+  source("dbinteraction.R", local =T)
+  source("Login.R", local =T)
+  observeEvent(input$savefile1, {
+    dbsaveinput()
+  })
+  session$onSessionEnded(function() {
+   dbDisconnectAll()
+  })
+  dbsaveinput<- reactive({
+    
+    conn = dbConnect(MySQL(), user='root', password='fsu123fsu', dbname='omen', host="147.102.23.20")
+    # res<-dbGetQuery(conn , paste0("select row_names from users where Username = '",USER$Username,"'"))
+    inputdata<-x()[,c("Date","QTY")]
+    
+    colnames(inputdata)<-c("datetime","value")
+    timepoint<-1:nrow(inputdata)
+    
+    # as.data.frame(inputdata)
+    tsname<-paste0(USER$Username,'_',input$savefiletitle)
+    
+
+    
+    inputdata<-(as.data.frame(cbind(inputdata,timepoint,tsname)))
+
+  #  inputdata<-inputdata[,c("timepoint","datetime","value","tsname")]
+    
+    dbWriteTable(conn,'timeseriesdata',inputdata,overwrite=F, append=T,row.names = F,nrows=nrow(inputdata))
+    dbDisconnectAll()
+    
+  })
+
+  output$welcometext<-renderText({
+    if (USER$Logged == TRUE)
+    msg<-paste0("Welcome back, ", USER$Username, "!")
+    else 
+    msg<-paste0("Welcome, Guest!")
+    msg
+    
+  })
+  
+  filetitle<-eventReactive(input$savefile1, {
+    input$savefiletitle
+  })
+      output$loggeduser<-renderText({
+USER$Logged
+})
+  output$savetitlemsg <- renderText({
+    if(is.null(filetitle())) {
+      text <- 'Please enter a title'
+    } else if(filetitle() %in% savedtsbyusr()) {
+      text <- 'Title already exists.'
+    } else {
+      text <- 'Saved!'
+    }
+    text
+  })
+  
+
+  
+  output$userinfo<-renderUI({
+    if (!is.na(USER$Username)){
+          db_username <- gsub(".*_", "", USER$Username)
+    	  rs = dbSendQuery(conn, paste0("select Email from omen.users where Username='",db_username,"'"))
+          db_email <- as.character(fetch(rs))
+	  
+    box( status="primary",width=12,
+         strong("Username: "),
+         h5(db_username),
+         strong("Email: "),
+         h5(db_email),
+         strong("Load Saved Timeseries"),
+         radioButtons("loadsaved", label = ("Saved"), savedtsbyusr())
+         
+    )
+    }
+  })
+  savedtsbyusr<-reactive({
+    result=c("None"="None")
+    rs = dbSendQuery(conn, paste0("select tsname from omen.timeseriesdata"))
+    df = fetch(rs, n=-1)
+    df=df[!duplicated(df),]
+   
+      templisted<-as.data.frame(unlist(strsplit(as.character(df),"_")))
+      listed<-as.matrix(templisted)
+      output$testtest<-renderText({
+        #k<-as.matrix(listed)
+        listed[2,1]
+      })
+    for (i in 1:nrow(templisted)){
+     # listed<-templisted
+      if (listed[i,1]==USER$Username){
+      result=rbind(result,c("Timeseries"=listed[i+1,1]))
+      }
+    }
+    
+    result
+  })
+  observeEvent(input$Login, {
+    updateinputpanel()
+  })
+  updateinputpanel<-reactive({
+    
+  })
+  observeEvent(input$ppyin, {
+    updateppy()
+  })
+  updateppy<-reactive({
+    updateSelectInput(session, "ppyin2", selected = input$ppyin)
+  })
+  observeEvent(input$ppyin2, {
+    updateppy2()
+  })
+  updateppy2<-reactive({
+    updateSelectInput(session, "ppyin", selected = input$ppyin2)
+  })
+  observeEvent(input$activetab, {
+    updatemenu()
+  })
+  observeEvent(input$activetab, {
+    intermittent()
+  })
+  observeEvent(input$useinter, {
+    forecastQTYb()
+  })
+  intermittent<-reactive({
+    if (input$activetab=="interdata"){
+      intermittent<-T
+    }else{
+      intermittent<-F
+    }
+    intermittent
+  })
+  updatemenu<-reactive({
+    if (input$activetab=="home"){
+      dropdownMenu(type = "message", icon=icon("question-circle"), badgeStatus="primary",
+                   messageItem(
+                     from='',
+                     message = tags$div(HTML('<h4> Input</h4><p><img src="fileformat.png" alt="csvfileformat" align="left" style="width:50px;height:50px;">
+                                              
+                                             &nbsp; This tab enables the user<br>
+                                             &nbsp; to import a time series to <br> 
+                                             &nbsp; OMEN in the form of a .csv <br>
+                                             &nbsp; file. The first column of the<br> 
+                                             file must contain the timestamp of the <br>
+                                             observations, while the second the data.<br>
+                                              The comma separators must be selected <br>
+                                             after uploading the file in order to help<br>
+                                             OMEN read it.
+                                             <br>  '), style = "display: inline-block; vertical-align: left;"), icon("calendar-minus-o")
+                   ),
+                   messageItem(
+                     from='',
+                     message = tags$div(HTML('<h4> File Frequency</h4><p><img src="area-chart.png" alt="filefreq" align="left" style="width:50px;height:50px;">
+                                                                                                   
+                                             &nbsp; be set or selected automatically <br> 
+                                             &nbsp; (unknown) based on the <br>
+                                             &nbsp; correlation of the  <br> 
+                                             observations.
+                                            
+                                             
+                                             <br>  '), style = "display: inline-block; vertical-align: middle;"), icon("calendar-minus-o")
+                   ),
+                   messageItem(
+                     from='',
+                     message = tags$div(HTML('<h4> Selected Dates</h4><p><img src="calendar.png" alt="calf" align="left" style="width:50px;height:50px;">
+                                              <p style="text-align:justify">
+                                           &nbsp; The time period of the data <br>
+                                           &nbsp; which will be used as a training<br> 
+                                           &nbsp; sample for the forecasting<br>
+                                           &nbsp; models (insample) is selected<br> 
+                                           through the provided calendar. This will<br>
+                                           also indicate the starting period <br>
+                                           (forecast origin) of the forecasts. <br>
+                                           In case more data are available <br>
+                                           (outsample), OMEN will use them to <br>
+                                          assess more effectively the forecasting <br>
+                                          performance of theselected forecasting  <br> model.
+                                           
+                                           <br> </p> '), style = "display: inline-block; vertical-align: middle;"), icon("calendar-minus-o")
+                   )
+      )} else if (input$activetab=="stats"){
+        dropdownMenu(type = "message", icon=icon("question-circle"), badgeStatus="primary",
+                     messageItem(
+                       from='',
+                       message = tags$div(HTML('<h4> Statistics</h4><p><img src="area-chart.png" alt="statistics" align="left" style="width:50px;height:50px;">
+                                             
+                                             &nbsp; In this tab a detailed view <br>
+                                             &nbsp; at the basic statistic analysis<br> 
+                                             &nbsp; of the imported time series <br>
+                                             &nbsp; (mean, median, standard<br> 
+                                             deviation etc.) is provided. The boxplot<br>
+                                             can be used to visualize the distribution<br>
+                                             of the data, while the ACF and PACF<br>
+                                              plots to describe the way the <br>
+                                              observations are related per lagging<br>
+                                              period. This can be quite useful for<br>
+                                              identifying seasonal patterns and trend.<br>
+                                             <br>  '), style = "display: inline-block; vertical-align: middle;"), icon("calendar-minus-o")
+                     ))
+        
+      # }else if (input$activetab=="welcome"){
+      #   dropdownMenu(type = "message", icon=icon("question-circle"), badgeStatus="primary",
+      #                messageItem(
+      #                  from='',
+      #                  message = tags$div(HTML('<h4> Login</h4><p><img src="area-chart.png" alt="statistics" align="left" style="width:50px;height:50px;">
+      #                                          
+      #                                          &nbsp; In this tab a detailed view <br>
+      #                                          &nbsp; at the basic statistic analysis<br> 
+      #                                          &nbsp; of the imported time series <br>
+      #                                          &nbsp; (mean, median, standard<br> 
+      #                                          deviation etc.) is provided. The boxplot<br>
+      #                                          can be used to visualize the distribution<br>
+      #                                          of the data, while the ACF and PACF<br>
+      #                                          plots to describe the way the <br>
+      #                                          observations are related per lagging<br>
+      #                                          period. This can be quite useful for<br>
+      #                                          identifying seasonal patterns and trend.<br>
+      #                                          <br>  '), style = "display: inline-block; vertical-align: middle;"), icon("calendar-minus-o")
+      #                  ))
+      #   
+      }
+    else if (input$activetab=="tso"){
+        dropdownMenu(type = "message", icon=icon("question-circle"), badgeStatus="primary",
+                     messageItem(
+                       from='',
+                       message = tags$div(HTML('<h4> Outliers</h4><p><img src="linechart2.png" alt="statistics" align="left" style="width:50px;height:50px;">
+ 
+
+                                           
+                                           &nbsp; Abnormalities in time series, <br>
+                                           &nbsp; such as extreme values, can   <br> 
+                                           &nbsp; have a significant penalty to <br>
+                                           &nbsp; forecasting performance. In this<br> 
+                                           tab the detection approach of Chen and <br>
+                                           Liu is applied in order to detect outliers<br>
+                                           and normalize the time series. Such    <br>
+                                           outliers may be Additive Outliers ("AO"),<br>
+                                           Level Shifts ("LS") or Temporary Changes <br>
+                                           ("TC"). The user selections will determine<br>
+                                           which of the abovementioned types of   <br>
+                                           outliers will be considered and removed<br>
+                                            (if found).                           <br>
+                                           If the time series is considered     <br>
+                                           seasonal, the deseasonalized one will<br>
+                                           be normalized instead.               <br>
+                                       <ul>
+                                       <li>Chen,  C.,  Liu,  L.-M.,  1993.  <br>
+                                           Joint  estimation  of  model  parameters
+                                           and  outlier  effects  in  time  series.
+                                           Journal of the American Statistical <br>
+                                           Association 88 (421), 284-297.
+                                       </li>
+                                       <li>Lopez de Lacalle, J., 2015. <br>
+                                           Detection of Outliers in Time Series,<br>
+                                           Version:  0.6, <a href="http://jalobe.com">http://jalobe.com</a>
+                                       </li>
+                                       </ul>
+                                           <br>  '), style = "display: inline-block; vertical-align: middle;"), icon("calendar-minus-o")
+                     ))
+      }else if (input$activetab=="decompose"){
+        dropdownMenu(type = "message", icon=icon("question-circle"), badgeStatus="primary",
+                     messageItem(
+                       from='',
+                       message = tags$div(HTML('<h4> Decompose</h4><p><img src="area-chart.png" alt="statistics" align="left" style="width:50px;height:50px;">
+                                           
+                                           &nbsp; In this tab OMEN decomposes <br>
+                                           &nbsp; the imported time-series in <br> 
+                                           &nbsp; order to provide a clearer <br>
+                                           &nbsp; picture of the time series <br> 
+                                           components. These are the Trend, <br>
+                                           the Seasonality and the Randomness<br>
+                                            (Noise) of the original data. To <br>
+                                           do so, the classical multiplicative <br>
+                                           decomposition by moving averages is <br>
+                                           applied. Additionally, in order to help<br>
+                                           the user decide whether the time series<br>
+                                           should be deseasonalized, seasonal ratios<br>
+                                           are presented per frequency period. <br>
+                                           Overlapping seasonal ratios indicate <br>
+                                            significant seasonal patterns, and <br>
+                                            vice versa. <br>
+                                       <ul>
+                                       <li> Kendall, M., Stuart, A., 1983. <br>
+                                            The advanced theory of statistics <br>3, 410-414.
+                                       </li>
+                                       </ul>
+                                           
+                                           <br>  '), style = "display: inline-block; vertical-align: middle;"), icon("calendar-minus-o")
+                     ))
+      }
+    else if (input$activetab=="tempag"){
+      dropdownMenu(type = "message", icon=icon("question-circle"), badgeStatus="primary",
+                   messageItem(
+                     from='',
+                     message = tags$div(HTML('<h4> Temporal Aggregation</h4><p><img src="calendar.png" alt="statistics" align="left" style="width:50px;height:50px;">
+                                          
+                                           &nbsp; Temporal aggregation is a <br>
+                                           &nbsp; method for transforming <br> 
+                                           &nbsp; the original data to <br>
+                                           &nbsp; alternative time frequencies.<br> 
+                                           As an example, imagine creating<br>
+                                           quarterly or yearly time series by<br>
+                                           aggregating a monthly one. This<br>
+                                           emphasizes different time series <br>
+                                           characteristics per aggregation level,<br>
+                                           such as seasonality, level and trend,<br>
+                                           leading to significant improvements<br>
+                                           in forecasting accuracy even when<br>
+                                           simple forecasting models are used to<br>
+                                           produce the individual forecast. In<br>
+                                           lower aggregation levels, high <br>
+                                           frequency components like seasonality<br>
+                                           are dominant, while as the aggregation<br>
+                                           level increases low frequency <br>
+                                           components, such as level and trend, <br>
+                                            are becoming more clear. <br>
+                                            <br>
+                                            
+                                           In this tab temporal aggregation is<br>
+                                           performed to all possible frequencies <br>
+                                           and the individual time series are  <br>
+                                           presented to highlight the hidden <br>
+                                            information mentioned above.  <br>
+                                       
+                                           
+                                           <br>  '), style = "display: inline-block; vertical-align: middle;"), icon("calendar-minus-o")
+                   ))
+    }
+    else if (input$activetab=="smooth"){
+      dropdownMenu(type = "message", icon=icon("question-circle"), badgeStatus="primary",
+                   messageItem(
+                     from='',
+                     message = tags$div(HTML('<h4> Smoothing</h4><p><img src="linechart2.png" alt="statistics" align="left" style="width:50px;height:50px;">
+                                                     
+                                           &nbsp; This tab offers a list of  <br>
+                                           &nbsp; methods which can be used<br> 
+                                           &nbsp; to smooth the time series.<br>
+                                           &nbsp; The smoothing methods will<br> 
+                                           eliminate the noise and help the<br>
+                                           models specify more accurately <br>
+                                           the level and the trend of the <br>
+                                           time series, leading to potentially<br>
+                                           better forecasts.<br>
+                                           <br>
+                                           The first one computes a simple  <br>
+                                           moving average of a specified order,<br>
+                                           while the second one uses a non-linear<br>
+                                           smoothing mechanism based on the theta <br>
+                                           transformation.<br>
+                                           <br>
+                                           If the time series is considered <br>
+                                           seasonal or/and abnormal, the <br>
+                                           deseasonalized or/and the normalized<br>
+                                           one will be smoothed instead.<br>
+                                       <ul>
+                                                
+                                       <li> Hyndman R. J., Athanasopoulos G.,<br>
+                                            Bergmeir C., Cinelli  C., <br>
+                                            Khan  Y., Mayer Z., Razbash S.,<br>
+                                            Schmidt D., Shaub D., Tang Y.,<br>
+                                            Wang E., Zhou Z.,  2015.  <br>
+                                            Forecasting  Functions  for  Time <br>
+                                            Series  and  Linear Models <br>
+                                            Description  Methods  and  tools <br>
+                                            for displaying  and  analysing<br>
+                                            univariate  time  series  <br>
+                                            forecastsincluding  exponential<br>
+                                            smoothing  via  state  space<br>  
+                                            models  and  automatic  ARIMA  <br>
+                                            modelling,  Version:6.2,<br>
+                                            <a href="http://github.com/robjhyndman/forecast">Forecast  Package</a>.
+                                       </li>
+     
+                                       <li> Assimakopoulos V., (1995) <br>
+                                            “A Successive Filtering<br>
+                                            Technique for Identifying <br>
+                                            Long- term Trends”,<br>
+                                            Journal of Forecasting, John Wiley,<br>
+                                            Vol.14, pp.35-43. <br>
+                                       </li>
+                                       </ul>
+                                           
+                                           <br>  '), style = "display: inline-block; vertical-align: middle;"), icon("calendar-minus-o")
+                   ))
+    }
+    else if (input$activetab=="data"){
+      dropdownMenu(type = "message", icon=icon("question-circle"), badgeStatus="primary",
+                   messageItem(
+                     from='',
+                     message = tags$div(HTML('<h4>Forecasting</h4><p><img src="area-chart.png" alt="statistics" align="left" style="width:50px;height:50px;">
+
+
+                                            
+                                           &nbsp; In this tab the user decides <br>
+                                           &nbsp; which forecasting methods will<br> 
+                                           &nbsp; be used to predict your time <br>
+                                           &nbsp; series. Depending on your <br> 
+                                           selections, this can be the original<br>
+                                           time series or the one calculated <br>
+                                           after the deseasonalization, <br>
+                                           normalization and smoothing processes<br>
+                                           have taken place. The choices are <br>
+                                           given below:<br>
+                                       <ol>
+                                               
+                                       <li> Naïve: The simplest way to <br>                                      
+                                            predict. The forecasts are <br>
+                                            equal to the last known<br>
+                                            observation. It is usually used<br>
+                                            as a benchmark or for predicting<br>
+                                            extremely noisy time series. <br></li>
+                                             
+                                       <li> Exponential Smoothing (ETS): <br>
+                                            The best-fitting model from the<br>
+                                            exponential smoothing family of<br>
+                                            methods is selected based on the<br>
+                                            minimization of an information <br>
+                                            criteria. In case deseasonalization<br>  
+                                            has not been applied, seasonal <br>
+                                            models are considered.<br>
+                                            
+                                       </li>
+                                             
+                                       <li> Simple Exponential Smoothing <br>  
+                                            (SES): Exponential smoothing<br>
+                                            used for stable time series.<br>
+                                       </li>	  
+                                       <li> Holt: Exponential smoothing <br>
+                                            used for trended time series.<br></li>
+                                       <li> Damped: Exponential smoothing<br>
+                                            used for damped trended time<br>
+                                             series.<br></li>
+                                       <li> Theta: The theta decomposition<br>  
+                                            method, well-known for winning<br>
+                                            the M3-competition. <br>
+                                       </li>
+                                       <li> Autoregressive Integrated  <br>  
+                                            Moving Average models (ARIMA):<br>
+                                            The best-fitting ARIMA model <br>
+                                            is selected based on the<br>
+                                            minimization of an information<br>
+                                            criteria. In case <br>
+                                            deseasonalization has not been<br>
+                                            applied, seasonal models are<br>
+                                            considered<br>
+                                       </li>    
+                                             
+
+                                       <li> Multiple Aggregation <br>
+                                            Prediction Algorithm (MAPA):<br>
+                                            Another way to apply temporal<br>
+                                            aggregation. The main <br>
+                                            difference between MAPA and <br>
+                                            the typical approach of temporal<br>
+                                            aggregation is that instead of<br>
+                                            combining the forecasts from the<br>
+                                            individual time levels, forecasts<br>
+                                            are decomposed to their time <br>
+                                            series components and the <br>
+                                            combination of these generates<br>
+                                            the final forecast. In case of<br>
+                                            deseasonalization, seasonal <br>
+                                            models are not considered.<br>
+                                      </li>
+                                              
+                                       <li> Auto-forecast: All of the above<br>
+                                            mentioned methods are applied on<br>
+                                            the time series. Their performance<br>
+                                            is evaluated and the best one<br>
+                                             is chosen to predict.</li>
+                                            
+                                       </li>
+                                       </ol>
+                                           
+                                           <br>  '), style = "display: inline-block; vertical-align: middle;"), icon("calendar-minus-o")
+                   )
+                   ,
+                   messageItem(
+                     from='',
+                     message = tags$div(HTML('<h4> Horizon </h4><p><img src="calendar.png" alt="calf" align="left" style="width:50px;height:50px;">
+                                          
+                                           &nbsp; In case you have chosen to <br>
+                                           &nbsp; perform temporal aggregation<br> 
+                                           &nbsp; as presented in the ‘Temporal  <br>
+                                           &nbsp; Aggregation’ tab (and not in <br> 
+                                           the form of MAPA) the selection <br>
+                                           indicates which method will be <br>
+                                           used to produce forecasts across <br>
+                                           the individual time levels. These<br>
+                                           will be then averaged to obtain the <br>
+                                           final forecasts. If selected, <br>
+                                           deseasonalization, normalization <br>
+                                           and smoothing will be applied <br>
+                                           automatically to the aggregated <br>
+                                           time series. 
+                                           <br> 
+                                                                                       
+                                       <ul>
+ 
+                                           
+
+                                           <li> Hyndman R.J., Koehler A.B.,<br>  
+                                           Snyder R.D., Grose S., 2002.<br>
+                                           A state space framework for <br>
+                                           automatic forecasting using <br>
+                                           exponential smoothing methods.<br>
+                                           International Journal of <br>
+                                           Forecasting 18 (3),  439-454. <br>
+                                           </li>    
+                                          
+                                           <li> Gardner, E. S., 1985. <br>
+                                           Exponential smoothing:  the <br>
+                                           state of the art. Journal of <br>
+                                           Forecasting 4 (1), 1-28.<br></li>
+                                              
+                                            <li> Gardner, E. S., 2006. <br>
+                                           Exponential smoothing:  the <br>
+                                           state of the art-Part II <br>
+                                           International Journal of <br>
+                                           Forecasting 22 (4), 637-666.<br></li>
+                                                 
+
+                                           <li> Assimakopoulos V., Nikolopoulos<br>
+                                           K., 2000. The theta model: a <br>
+                                           decomposition approach to <br>
+                                           forecasting. International <br>  
+                                           Journal of Forecasting 16 (4),<br>
+                                           521-530.<br>
+                                           </li>
+
+                                           <li> Hyndman R., Khandakar Y.,  <br>  
+                                           2008. Automatic time series <br>
+                                           forecasting: the forecast  <br>
+                                           package for R . Journal of<br>
+                                           Statistical Software 26 (3),<br>
+                                           1-22. <br></li>
+                                                  
+                                           <li>Kourentzes N., Petropoulos F.,<br>
+                                           Trapero, J. R., 2014. Improving<br>
+                                           forecasting by estimating time<br>
+                                           series structural components<br>
+                                           across multiple frequencies.<br>
+                                           International Journal of <br>
+                                           Forecasting 30 (2), 291-302.<br>
+                                           </li>    
+                                           
+                                           </ul>'), style = "display: inline-block; vertical-align: middle;"), icon("calendar-minus-o")
+                   ))
+    }
+    else if (input$activetab=="errors"){
+      dropdownMenu(type = "message", icon=icon("question-circle"), badgeStatus="primary",
+                   messageItem(
+                     from='',
+                     message = tags$div(HTML('<h4> Errors</h4><p><img src="area-chart.png" alt="statistics" align="left" style="width:50px;height:50px;">
+       
+
+                                           &nbsp; In this tab the forecasting  <br>
+                                           &nbsp; performance is assessed using<br> 
+                                           &nbsp; multiple error metrics. The <br>
+                                           &nbsp; in-sample and out-sample <br> 
+                                           evaluation refer to the errors<br>
+                                           calculated using the training and<br>
+                                           the surplus data (if any), <br>
+                                           respectively, as defined at the<br>
+                                           import tab. Each error metric<br>
+                                           provides different information<br>
+                                           as follows:<br>
+                                           <ol>
+                                           
+                                           <li> Mean Error (ME): Evaluates<br>  
+                                           the model in terms of bias. <br>
+                                           Positive values indicate  <br>
+                                           pessimistic forecasts, while<br>
+                                           negative optimistic forecasts.<br>
+                                           Its value is scale dependent. <br>
+                                           </li>    
+                                            
+                                           <li>Mean Absolute Error (MAE):<br>
+                                           Evaluates the model in terms <br>
+                                           of accuracy. The lowest its  <br>
+                                           value, the better the accuracy<br>
+                                           of the model. Its value is <br>
+                                           scale dependent. <br></li>
+                                            
+                                           <li>Mean Squared Error (MSE):<br>
+                                           Evaluates the model in terms<br>
+                                           of accuracy. In contrast with<br>
+                                           MAE, which averages the <br>
+                                           individual point errors, MSE<br>
+                                           emphasizes large point errors.<br>
+                                           In this respect, MSE can be <br>
+                                           used to assess the robustness <br>
+                                           of the model. Its value is<br>  
+                                           scale dependent.  <br>
+                                           </li>
+                                           
+                                              
+                                           <li>Root Mean Squared Error(RMSE):<br>
+                                           It has the same use with MSE. <br>
+                                           However, its value is  <br>
+                                           comparable with that of<br>  
+                                           the data. <br>
+                                           </li>
+                                               
+                                           <li>Mean Percentage Error(MPE):<br>  
+                                            Evaluates the model in terms <br>
+                                           of bias. Positive values indicate<br>
+                                           pessimistic forecasts, while <br>
+                                           negative optimistic forecasts.<br>
+                                           Its value does not depend on the<br>
+                                           scale of the data and can <br>
+                                           therefore be used to assess the<br>
+                                           model across multiple time series.<br>
+                                        </li>
+                                                  
+                                           <li>Mean Absolute Percentage Error <br>
+                                           (MAPE): Evaluates the model in<br>
+                                            terms of accuracy. The lowest its<br>
+                                           value, the better the accuracy <br>
+                                           of the model. Its value does not<br>
+                                           depend on the scale of the data <br>
+                                           and can therefore be used to<br>
+                                           assess the model across multiple<br>
+                                           time series.<br>
+                                           </li>    
+                                              
+                                           <li>Symmetric Mean Absolute Error<br>
+                                           (sMAPE): Can be used instead of<br>
+                                           MAPE for evaluating the accuracy <br>
+                                           of the models. The advantage of <br>
+                                           doing so is that sMAPE is <br>
+                                           calculated even when zero values<br>
+                                           are present. Its value is <br>
+                                           limited from 0 to 200.  <br>
+                                           </li>
+                                           
+                                           <li>Mean Absolute Scaled Error<br>
+                                           (MAsE): This error metric <br>
+                                           compares the accuracy of the <br>
+                                           selected method with that of<br>
+                                           Naïve. In this regard, MAsE is <br>
+                                           the ratio of the forecast error<br>
+                                           deriving from the method whose<br>
+                                           performance is to be measured <br>
+                                           divided by the error of a <br>
+                                           benchmark method. This way, the <br>
+                                           error measures the performance of <br>
+                                           the method comparing it directly  <br>
+                                           to that of a simpler benchmark. <br>
+                                           </li>
+                                          
+                                           </ol>
+                                           <br>  '), style = "display: inline-block; vertical-align: middle;"), icon("calendar-minus-o")
+                   )
+                   ,
+                   messageItem(
+                     from='',
+                     message = tags$div(HTML('<p><img src="calendar.png" alt="calf" align="left" style="width:50px;height:50px;">
+                                            
+                                           &nbsp; The plots can be additionally<br>
+                                           &nbsp; used to identify potential bias,<br> 
+                                           &nbsp; large point errors and relations<br>
+                                           &nbsp; between the errors. When the<br> 
+                                           majority of the point errors are above<br>
+                                           the y=x line of the scatter plot,<br>
+                                           optimistic forecasts are systematically<br>
+                                           produced by the model. The opposite <br>
+                                           stands for pessimistic forecasts. <br>
+                                           Equally distributed errors indicate <br>
+                                           unbiased forecasts. Potential relations <br>
+                                           between the point errors are visualized<br>
+                                           through the ACF and PACF diagrams. <br>
+                                           Ideally, autocorrelation factors should <br> be insignificant across all the lag <br>
+                                           periods.   
+                                           
+                                           <br>  '), style = "display: inline-block; vertical-align: middle;"), icon("calendar-minus-o")
+                   ))
+    }
+  })
+  output$homehelp <- renderMenu({
+    updatemenu()
+  })
+  
+  output$AboutMenu <- renderMenu({
+    
+    dropdownMenu(type = "message", icon=icon("users"), badgeStatus="primary",
+                 
+                 notificationItem(
+                   icon=icon("calendar-minus-o"),
+                   status = "success",
+                   text = tags$div(HTML('<p><img src="vassimc.jpg" alt="Vassim" align="left" style="width:55px;height:55px;">
+                                      <a href="http://fsu.gr/en/professor/vassilis-assimakopoulos"><h4> Vassilis Assimakopoulos</h4></a>
+</p>'), style = "display: inline-block; vertical-align: middle;"), icon("user")
+                   
+                   
+                 ),
+                 notificationItem(
+                   icon=icon("calendar-minus-o"),
+                   status = "success",
+                   text = tags$div(HTML(' <img src="axilleas_raptis.png" alt="Vassim" align="left" style="width:50px;height:50px;">
+                           <a href="http://fsu.gr/en/postgraduate-students/achilleas-raptis"><h4> Achilleas  Raptis</h4></a> 
+                           
+                           
+                           '), style = "display: inline-block; vertical-align: middle;"), icon("user")
+                   
+                   
+                 ),
+                 notificationItem(
+                   
+                   # from="About",
+                   icon=icon("calendar-minus-o"),
+                   status = "success",
+                   text = tags$div(HTML(' <p><img src="vspil.jpg" alt="Vassim" align="left" style="width:55px;height:55px;">
+                                    <a href="http://fsu.gr/en/postgraduate-students/evangelos-spiliotis"><h4> Evangelos Spiliotis</h4></a> </p>
+
+                                      </p>
+                                     '), style = "display: inline-block; vertical-align: middle;"), icon("user")
+                   
+                   
+                 ),
+                 notificationItem(
+                   icon=icon("calendar-minus-o"),
+                   status = "success",
+                   text = tags$div(HTML(' <p><img src="elec.png" alt="Vassim" align="left" style="width:55px;height:55px;">
+                             <a href="http://fsu.gr/en/undergratuate-students/electra-skepetari"><h4> Electra Skepetari</h4></a> </p>
+
+                                      </p>
+                                     '), style = "display: inline-block; vertical-align: middle;"), icon("user")
+                   
+                   
+                 )
+    )
+    
+  })
+  inputcsv<-reactive({
+    inFile <- input$file1
+    if (is.null(inFile))
+      return(NULL)
+    inputcsv<-read.csv(inFile$datapath, header = input$header, sep=input$sep)
+    inputcsv
+
+    
+    
+    
+    
+  })
+
+  ##########Date Input Box Fix#####
+  observeEvent(input$file1, {
+    validate(
+      need((ncol(inputcsv())>1) , 'Please choose a file to import with correct dimensions') 
+    )
+    data1<-inputcsv()
+    colnames(data1)<-c("Date","QTY")
+    data1$Date2<-gsub("-", "", data1$Date)
+    data1$Date2<-gsub("\\.", "", data1$Date2)
+    data1$Date2<-gsub("/", "", data1$Date2)
+    if (length(data1[3, c("Date2")]>8)) {
+      for (i in 1:length(data1$Date2)){
+        
+        data1[i, c("Date4")]<-substr(as.character(data1[i, c("Date2")]),1,6)
+        
+      }
+    }
+    
+    updateDateRangeInput(session, "dates",
+                         label = "Date range",
+                         start = paste0(substr(as.character(data1[1, c("Date2")]),1,4),"-",substr(as.character(data1[1, c("Date2")]),5,6),"-01"),
+                         end = paste0(substr(as.character(data1[length(data1$Date2), c("Date2")]),1,4),"-",substr(as.character(data1[length(data1$Date2), c("Date2")]),5,6),"-01"),
+                         min = paste0(substr(as.character(data1[1, c("Date2")]),1,4),"-",substr(as.character(data1[1, c("Date2")]),5,6),"-01"),
+                         max = paste0(substr(as.character(data1[length(data1$Date2), c("Date2")]),1,4),"-",substr(as.character(data1[length(data1$Date2), c("Date2")]),5,6),"-01")
+                         
+    )
+  })
+  
+
+  
+  ##########Data Time Filtering##########
+  
+  dateinput<-reactive({
+    dateinput<-paste(as.character(input$dates), collapse = "U")
+    date<- as.array(unlist(strsplit(dateinput, "[U]")))
+    date
+  })
+  
+  fileppy<-reactive({ ###find input ts frequency based on difference in date column
+    
+    inputcsv<-x()
+    date1<-as.character(inputcsv[3,c("Date")])
+    date2<-as.character(inputcsv[4,c("Date")])
+    month1<-as.numeric(substr(date1,6,7))
+    year1<-as.numeric(substr(date1,1,4))
+    month2<-as.numeric(substr(date2,6,7))
+    year2<-as.numeric(substr(date2,1,4))
+    if (month2-month1<0){
+      dift<-12-month1+month2+(year2-year1-1)*12
+    }
+    else{
+      dift<-(year2-year1)*12+month2-month1
+    }
+    
+    
+    if (dift==1) 
+      fileppy=12
+    else if (dift==3)
+      fileppy=4
+    else if (dift==4)
+      fileppy=3
+    else if (dift==6)
+      fileppy=2
+    else if (dift==2)
+      fileppy=6
+    else
+      fileppy=1
+  })
+  x<-reactive({ 
+    
+    validate(
+      need(((input$file1 != '')||(input$loadsaved != "None")) , 'Please choose a file to import') 
+    )
+    
+    #Date Filtering
+    if (((USER$Logged=="TRUE")&&(input$loadsaved == "None"))&&(!is.na(input$file1))){
+    FirstYear<-as.numeric(substr(as.character(dateinput()[1]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[1]),6,7))
+    TSStartPeriod <-100*FirstYear+FirstMonth #Get first forecast
+    data1<-inputcsv()
+    colnames(data1)<-c("Date","QTY")
+    data1$Date2<-gsub("-", "", data1$Date)
+    data1$Date2<-gsub("\\.", "", data1$Date2)
+    data1$Date2<-gsub("/", "", data1$Date2)
+    if (length(data1[3, c("Date2")]>8)) {
+      for (i in 1:length(data1$Date2)){
+        
+        data1[i, c("Date4")]<-substr(as.character(data1[i, c("Date2")]),1,6)
+        
+      }
+    }
+    data1
+    data1$Date<-as.numeric(data1$Date4)
+    
+    data1 <- data1[data1$Date>=TSStartPeriod ,]  
+    selected<-data1
+    selected[is.na(selected)] <- 0
+    selected[,c("QTY")]<-as.numeric(as.character(selected[,c("QTY")]))
+    
+    selected$MONTH<-selected$Date
+    selected
+    }else {
+     tsnamefield<-paste0(USER$Username,"_",input$loadsaved)
+	#tsnamefield<-paste0("electra","_","n1940")
+     rs = dbSendQuery(conn, paste0("select * from omen.timeseriesdata where tsname='",tsnamefield,"'"))
+     selected = fetch(rs, n=-1)
+     colnames(selected)<-c("Date","QTY","timepoint","tsname","id")
+     selected[,c("QTY")]<-as.numeric(as.character(selected[,c("QTY")]))
+     selected<-selected[,c("Date","QTY")]
+     output$testtableee<-renderTable({
+       selected
+     })
+     selected
+    }
+    
+  })
+  xsel<-reactive({
+    x()[,c("Date","QTY")]
+  })
+ #####editable
+  rv <- reactiveValues(cachedTbl = NULL)
+  
+     output$tbl <- renderRHandsontable({
+    if (is.null(input$tbl)){
+      hot <- rhandsontable(xsel())
+     hot
+    } else{
+      rv$cachedTbl <<- input$tbl
+      hot <- hot_to_r(input$tbl)
+      hot <- rhandsontable(hot)
+    }
+  })
+     xupdate<-reactive({
+       rv$cachedTbl
+     })
+     upx<-reactive({
+      if (length(xupdate())==0){
+        unlisted<-x()
+      }else{
+      unlisted<-as.data.frame(hot_to_r(xupdate()))
+      }
+       })
+     output$inputplot<-renderChart2({
+       original<-x()[,c("QTY")]
+       edited<-upx()[,c("QTY")]
+       jdata<-as.data.frame(cbind(original,edited))
+       colnames(jdata)<-c("OriginalData","EditedData")
+       jdata$rn<-1:nrow(jdata)
+       
+       h21 = rCharts::Highcharts$new()
+       h21$series(name="Imported Data",data = jdata$OriginalData, type = "line")
+       h21$series(name="Edited Data",data=jdata$EditedData, type="line")
+       h21$title(text = "Imported Timeseries Plot")
+       h21$exporting(enabled = T)
+       
+       return(h21)
+     })
+
+     observeEvent(input$tbl, {
+       x()
+     })
+  ##########JudgeTab############
+  
+  output$sliders <- renderUI({
+    if (is.null(input$horizonin) || is.na(input$horizonin)) {
+      n <- 1
+    } else {
+      n <-input$horizonin
+    }
+    
+    lapply(1:n, function(i) {
+      
+      numericInput(
+        inputId = paste0("num", (i-1))
+        , label = paste0("Forecast", i)
+        , value = round(judgedata()$JudgementalForecasts[i],2)
+        , step = 0.1
+        , width=300
+      )
+    })
+  })
+  observeEvent(input$resetjudge, {
+    resetjudge()
+  })
+  resetjudge<-reactive({
+    for (i in 1:input$horizonin){
+      
+      updateSliderInput(session, paste0("num", (i-1)), value = NA)
+      
+    }
+  })
+  judgedata<-reactive({
+    datatable<-as.data.frame(tail(na.omit(FinalTable()$fqvalueb),as.numeric(input$horizonin)))
+    datatable<-cbind(datatable,datatable)
+    colnames(datatable)=c("OriginalForecasts","JudgementalForecasts")
+    inputs<-data.frame(lapply(1:input$horizonin, function(i) {
+      input[[paste0("num", i-1)]]
+    }))
+    inputs<-t(inputs)
+    
+    for (i in 1:input$horizonin){
+      if (is.na(inputs[i])){
+        datatable$JudgementalForecasts[i]<-datatable$OriginalForecasts[i]
+      }else{
+        datatable$JudgementalForecasts[i]<-inputs[i]
+        
+      }
+      
+    }
+    as.data.frame(datatable)
+    #  inputs
+  })
+  output$judgetable<-renderTable({
+    as.data.frame(judgedata())
+  })
+  output$judgeplot<-renderChart2({
+    
+    jdata<-as.data.frame(judgedata())
+    jdata$rn<-1:nrow(jdata)
+    
+    h19 = rCharts::Highcharts$new()
+    h19$series(name="Original",data = jdata$OriginalForecasts, type = "line")
+    h19$series(name="Judgemental",data=jdata$JudgementalForecasts, draggableY=T,type="line")
+    h19$title(text = "Judgemental Forecasts Plot")
+    h19$exporting(enabled = T)
+    
+    return(h19)
+  })
+  finalforecasts<-reactive({
+    if (input$usejudgemental==T){
+      finalforecasts<-judgedata()$JudgementalForecasts
+    }else{
+      #finalforecasts<-judgedata()$OriginalForecasts
+      finalforecasts<-judgedata()$JudgementalForecasts
+    }
+  })
+  
+  ########Stats Tab##########
+  output$IDI <- renderValueBox({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    insample <- as.data.frame(upx()$QTY[upx()$Date<FirstForecast])
+    category<-idclass(insample,type=c("PKa","SBC","KHa","KH","PK"),a.in=NULL,
+            outplot=c("summary","detail","none"),plot.focus=NULL)
+    valueBox(
+      round(as.numeric(category$p),2), "IDI", icon = icon("bar-chart"),
+      color = "light-blue"
+    )
+  })
+  output$MeanValue <- renderValueBox({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    insample <- ts(upx()$QTY[upx()$Date<FirstForecast],frequency=fileppy())
+    
+    valueBox(
+      round(mean(insample),2), "Mean", icon = icon("bar-chart"),
+      color = "light-blue"
+    )
+  })
+  output$MedianValue <- renderValueBox({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    insample <- ts(upx()$QTY[upx()$Date<FirstForecast],frequency=fileppy())
+    
+    valueBox(
+      round(median(insample),2), "Median", icon = icon("bar-chart"),
+      color = "blue"
+    )
+  })
+  output$SdValue <- renderValueBox({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    insample <- ts(upx()$QTY[upx()$Date<FirstForecast],frequency=fileppy())
+    
+    valueBox(
+      round(sd(insample),2), "Standard Deviation", icon = icon("bar-chart"),
+      color = "blue"
+    )
+  })
+  output$CVValue <- renderValueBox({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    insample <- ts(upx()$QTY[upx()$Date<FirstForecast],frequency=fileppy())
+    
+    valueBox(
+      paste0(round(((sd(insample)/mean(insample))*100),2),"%"), "Coefficient of Variation", icon = icon("bar-chart"),
+      color = "light-blue"
+    )
+  })
+  output$VarValue <- renderValueBox({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    insample <- ts(upx()$QTY[upx()$Date<FirstForecast],frequency=fileppy())
+    
+    valueBox(
+      round(var(insample),2), "Variance", icon = icon("bar-chart"),
+      color = "blue"
+    )
+  })
+  output$RValue <- renderValueBox({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    insample <- ts(upx()$QTY[upx()$Date<FirstForecast],frequency=fileppy())
+    
+    valueBox(
+      round(cor(1:length(insample),insample),2), "Linear Correlation Coefficient", icon = icon("bar-chart"),
+      color = "light-blue"
+    )
+  }) 
+  output$acfdata<-renderTable({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    insample <- ts(upx()$QTY[upx()$Date<FirstForecast],frequency=fileppy())
+    data<-as.data.frame(acf(insample)$acf)
+    colnames(data)<-"Auto Correlation Factor"
+    data$Lag<-as.numeric(row.names(data))
+    data[,c("Lag","Auto Correlation Factor")]
+  }, 
+  include.rownames=FALSE)
+  output$acfplot<-renderChart2({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    insample <- ts(upx()$QTY[upx()$Date<FirstForecast],frequency=fileppy())
+    data<-as.data.frame(acf(insample)$acf)
+    colnames(data)<-"Auto Correlation Function"
+    data$Lag<-row.names(data)
+    data<-data[-c(1), ]
+    h7 = hPlot(y="Auto Correlation Function",x="Lag",data = data, type = "column")
+    
+    return (h7)
+  })
+  output$pacfdata<-renderTable({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecastn
+    insample <- ts(upx()$QTY[upx()$Date<FirstForecast],frequency=fileppy())
+    data<-as.data.frame(pacf(insample)$acf)
+    colnames(data)<-"Partial Auto Correlation Function"
+    data$Lag<-row.names(data)
+    data[,c("Lag","Partial Auto Correlation Function")]
+  }, 
+  include.rownames=FALSE)
+  output$pacfplot<-renderChart2({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    insample <- ts(upx()$QTY[upx()$Date<FirstForecast],frequency=fileppy())
+    data<-as.data.frame(pacf(insample)$acf)
+    colnames(data)<-"Partial Auto Correlation Function"
+    data$Lag<-as.numeric(row.names(data))
+    h8 = hPlot(y="Partial Auto Correlation Function",x="Lag",data = data, type = "column")
+    # h8$chart(height=400, width=500)
+    
+    return (h8)
+  })
+  boxplotdata<-reactive({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    
+    datab<-data.frame(r = integer(length(upx()$QTY[upx()$Date<FirstForecast])),
+                      val = numeric(length(upx()$QTY[upx()$Date<FirstForecast])))
+    datab$val<-upx()$QTY[upx()$Date<FirstForecast]
+    datab$r<-1
+    datab
+  })
+  output$boxplot<-renderChart2({
+    
+    datab<-boxplotdata()
+    bwstats = setNames(as.data.frame(boxplot(val ~ r, data = datab, plot = F)$stats), 
+                       nm = NULL)
+    h9 = Highcharts$new()
+    h9$set(series = list(list(name = "Data", data = bwstats)))
+    h9$xAxis(categories = levels(datab$val), title = list(text = "Data"))
+    h9$yAxis(title = list(text = "Value"))
+    h9$chart(type = "boxplot")
+    # h9$chart(height=400, width=500)
+    return(h9)
+    output$statsprogress<-renderText({100})
+    
+  })
+  
+  ######End Of Stats Tab#########
+  
+  ######Forecasts######
+  
+  forecastQTY<- reactive({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    
+    ######frequency#####
+    if (input$ppyin=='Unknown') {
+      tsfrequency<-findppy(upx()$QTY)
+    }
+    else {
+      tsfrequency<-as.numeric(as.character(input$ppyin))
+    }
+    insample <- ts(upx()$QTY[upx()$Date<=FirstForecast],frequency=fileppy()) #Get user selected data
+    
+    
+    
+    
+    
+    
+    outofsample <- ts(upx()$QTY,frequency=fileppy())
+    ##Intermittent demand or Continuous Demand?##
+    if ((intermittent()==F)&&(input$useinter==F)){
+      if (input$tain==T){
+        
+        datamul<-PreForecastTa(InSample=insample, Outliers=input$outliersin, Method=input$methodin, Horizon=input$horizonin, ppy=input$ppyin,type1=input$ao, type2=input$ls, type3=input$tc, smoothdatain=input$smin,smmethod=input$smoothmethodin,imain=input$imain ) 
+        data<-datamul[[1]]
+        forecastqty1<-ForecastTa(datamul,input$horizonin)   
+        output$testtable<-renderText({datamul[[2]]$NewInSample})
+        forecastqty<-ExpandTa(forecastqty1)
+      }else if (input$smin==T){
+        #get forecast arguments
+        data<-PreForecastsm(InSample=insample, Outliers=input$outliersin, Method=input$methodin, Horizon=input$horizonin, ppy=input$ppyin,type1=input$ao, type2=input$ls, type3=input$tc) 
+        #smoothing
+        data$InSample=smoothwmethod(data$InSample,input$smoothmethodin,input$imain)
+        data$NewInSample=smoothwmethod(data$NewInSample,input$smoothmethodin,input$imain)
+        #forecast
+        forecastqty<-Forecastsm(InSample=data$InSample, NewInSample=data$NewInSample, SeasonalityIndexes=data$Indexes, SIdec=data$SIDec ,ppy=fileppy(),ForecastHorizon=input$horizonin,Method=input$methodin)
+      }else{
+        #get forecast arguments
+        data<-PreForecast(InSample=insample, Outliers=input$outliersin, Method=input$methodin, Horizon=input$horizonin, ppy=input$ppyin,type1=input$ao, type2=input$ls, type3=input$tc) 
+        #forecast 
+        forecastqty<-Forecast(InSample=data$InSample, NewInSample=data$NewInSample, SeasonalityIndexes=data$Indexes, SIdec=data$SIDec ,ppy=fileppy(),ForecastHorizon=input$horizonin,Method=input$methodin)
+      }
+      if ((input$outliersin==TRUE)&&(input$methodin=='Optimal')&&((forecastqty[[1]]=='Naive')||(forecastqty[[1]]=='Theta'))) data$NoOutliers<-data$NoOutliersSea
+      
+      
+      quantity_forecast_final=c(forecastqty[[2]],forecastqty[[3]])
+      return(list("forecast"=quantity_forecast_final, "method"=forecastqty[[1]], "NoOutliers"=data$NoOutliers, "Deseasonalized"=data$DeseasonalizedInsample))
+    }
+    else if ((intermittent()==T)||(input$useinter==T)){
+      #get forecast arguments
+      data<-PreForecast(InSample=insample, Outliers=F, Method=input$methodin2, Horizon=input$horizonin2, ppy=1,type1=input$ao, type2=input$ls, type3=input$tc) 
+      #forecast 
+      forecastqty<-ForecastInter(InSample=data$InSample,ForecastHorizon=input$horizonin2,Method=input$methodin2)
+      if ((input$outliersin2==TRUE)&&(input$methodin2=='Optimal')&&((forecastqty[[1]]=='Naive')||(forecastqty[[1]]=='Theta'))) data$NoOutliers<-data$NoOutliersSea
+      
+      
+      quantity_forecast_final=c(forecastqty[[2]],forecastqty[[3]])
+      return(list("forecast"=round(quantity_forecast_final,2), "method"=forecastqty[[1]], "NoOutliers"=data$NoOutliers, "Deseasonalized"=data$DeseasonalizedInsample))
+    }
+
+  })
+
+  forecastQTYb <- reactive({
+    quantity_forecast_final<-forecastQTY()$forecast
+    return(quantity_forecast_final)
+  })
+  forecastQTYc<-reactive({
+    OutliersSelection()[[1]]
+  })
+  forecastQTYd<-reactive({
+    insampledes<-forecastQTY()$Deseasonalized
+    insampledes
+  })
+  forecastQTYe<-reactive({
+    
+    ######frequency######
+    FirstForecast <- paste(dateinput()[2]) #Get first forecast
+    if (input$ppyin=='Unknown') {
+      tsfrequency<-findppy(upx()$QTY)
+    }
+    else {
+      tsfrequency<-as.numeric(as.character(input$ppyin))
+    }
+    data<-data.frame(y=1:input$horizonin)
+    insample <- ts(upx()$QTY,frequency=fileppy()) #Get user selected data
+    data$forecasts<-tail(forecastQTYb(),as.numeric(input$horizonin))
+    data$AA <- as.numeric(rownames(data))
+    errorqty1a<-ErrorsCalculation(tail(FinalTable()$fqvalue,input$horizonin), tail(FinalTable()$qvalue,input$horizonin))
+    errorqty<-t(errorqty1a[[2]])
+    
+    plotin<-input$plotin
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstYearData<-as.numeric(substr(as.character(dateinput()[1]),1,4))
+    FirstMonthData<-as.numeric(substr(as.character(dateinput()[1]),6,7))
+    yd<-12*(FirstYear-FirstYearData-1)+12-FirstMonthData+FirstMonth    
+    MSE<-ErrorsCalculation(head(FinalTable()$fqvalue, yd), head(FinalTable()$qvalue, yd))$MeanErrors["MSE"]
+    observations<-as.numeric(length(insample))
+    data$CL1<-data$forecasts+as.numeric(as.character(input$clin))*sqrt(data$AA)*sqrt(MSE)
+    data$CL2<-data$forecasts-as.numeric(as.character(input$clin))*sqrt(data$AA)*sqrt(MSE)
+    
+    as.data.frame(data)
+  })
+  
+  ###End Of Forecasts###
+  
+  FinalTable <-reactive({
+
+    TSSY<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    TSSM<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstYear<-as.numeric(substr(as.character(dateinput()[1]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[1]),6,7))
+    
+    
+    ####fixing ending date###
+    
+    if (input$horizonin%%12+TSSM>12){
+      TSEY<-TSSY+input$horizonin%/%12+1
+      TSEM<-input$horizonin%%12+TSSM-12
+    }
+    else
+    {
+      TSEY<-TSSY+input$horizonin%/%12
+      TSEM<-input$horizonin%%12+TSSM
+    }
+    ##########
+    
+    originaldataqtyuncut<-ts(upx()$QTY,frequency=fileppy(),start = c(FirstYear, FirstMonth))
+    originaldataqtyuncut.m<- data.frame(yr=round(time(originaldataqtyuncut), digits = 2),qvalueuncut=as.matrix(originaldataqtyuncut)) 
+    originaldataqty <- ts(upx()$QTY,frequency=fileppy(),start = c(FirstYear, FirstMonth), end = c(TSSY,TSSM)) #Get user selected data
+    originaldataqty.m<- data.frame(yr=round(time(originaldataqty), digits = 2),qvalue=as.matrix(originaldataqty)) 
+    deseasonalizedqty<-ts(forecastQTYd(),frequency=fileppy(),start = c(as.numeric(FirstYear), as.numeric(FirstMonth)),end = c(TSSY,TSSM))
+    deseasonalizedqty.m<- data.frame(yr=round(time(deseasonalizedqty), digits = 2),qvaluec=as.matrix(deseasonalizedqty))
+    forecastqty<-ts(forecastQTYb(),frequency=fileppy(),start = c(as.numeric(FirstYear), as.numeric(FirstMonth)))
+    forecastqty.m<- data.frame(yr=round(time(forecastqty), digits = 2),fqvalue=as.matrix(forecastqty))
+    
+    qtydata<-merge(originaldataqty.m,forecastqty.m, by = "yr", all=TRUE)
+    
+
+    #      
+    #     
+    #forecastqty<- ts(tail(forecastQTYb(),input$horizonin),frequency=fileppy(), start = c(as.numeric(FirstYear), as.numeric(FirstMonth)), end=c(TSEY,TSEM))
+    
+    qtydata<-merge(qtydata,originaldataqtyuncut.m,by = "yr", all=TRUE)
+    #qtydata<-merge(qtydata,fforecasts.m,by = "yr", all=TRUE)
+    
+    
+    if (input$outliersin==TRUE) {  
+      outliersdataqty<-ts(forecastQTYc(),frequency=fileppy(),start = c(as.numeric(FirstYear), as.numeric(FirstMonth)))
+      outliersdataqty.m<- data.frame(yr=round(time(outliersdataqty), digits = 2),qvalueb=as.matrix(outliersdataqty))
+      qtydata<-merge(qtydata,outliersdataqty.m,by = "yr", all=TRUE)
+    }
+    qtydata<-merge(qtydata,deseasonalizedqty.m,by = "yr", all=TRUE)
+
+    #dokimi
+    forecastqtyb<- window(forecastqty, start = c(as.numeric(FirstYear), as.numeric(FirstMonth)), end = c(TSEY,TSEM), frequency=fileppy())
+    #
+    #sti thesi tou katw
+    #forecastqtyb<- window(forecastqty, start =c(TSSY,TSSM), end = c(TSEY,TSEM), frequency=fileppy())
+    fqvalueb.m<- data.frame(yr=round(time(forecastqtyb), digits = 2),fqvalueb=as.matrix(forecastqtyb))
+    qtydata<-merge(qtydata,fqvalueb.m,by = "yr", all=TRUE)
+
+    
+    inputcsv<-upx()
+    
+    date1<-as.character(inputcsv[3,c("Date")])
+    date2<-as.character(inputcsv[4,c("Date")])
+    month1<-as.numeric(substr(date1,6,7))
+    year1<-as.numeric(substr(date1,1,4))
+    month2<-as.numeric(substr(date2,6,7))
+    year2<-as.numeric(substr(date2,1,4))
+    if (month2-month1<0){
+      dift<-12-month1+month2+(year2-year1-1)*12
+    }
+    else{
+      dift<-(year2-year1)*12+month2-month1
+    }
+    months<-" months"
+    seqby<-paste0(dift,months)
+    #########
+    
+    
+    finaldata<-qtydata
+    Date <- as.character(format(seq(as.Date(paste0(as.character(FirstYear),"-",as.character(FirstMonth),"-01")), by=seqby, length.out=nrow(finaldata)), format="%m-%Y"))
+    DatePlot <- as.numeric(as.POSIXct(seq(as.Date(paste0(as.character(FirstYear),"-",as.character(FirstMonth),"-01")), by=seqby, length.out=nrow(finaldata))))*1000.01 
+    finaldata<-cbind(qtydata,Date,DatePlot)
+  finaldata
+  })
+  output$testtableee<-renderTable({
+    as.data.frame(FinalTable())
+  })
+  OutputTable<-reactive({
+    datatable<-as.data.frame(FinalTable())
+    colnames(datatable)[colnames(datatable)=="Date"] <- "Timestamp"
+    display<-datatable[,c( "Timestamp")]
+    
+    colnames(datatable)[colnames(datatable)=="qvalueuncut"] <- "Value"
+    colnames(datatable)[colnames(datatable)=="fqvalue"] <- "Value Forecast"
+    display<-cbind(display,datatable[,c( "Value","Value Forecast")])
+    
+    display <- cbind(AA = rownames(display), display)
+    colnames(display)[colnames(display)=="AA"] <- "ID"
+    colnames(display)[colnames(display)=="display"] <- "Timestamp"
+    display
+  })  
+  output$table <- renderTable({
+    data<-OutputTable()
+    rownames(data) <- NULL
+    data},include.rownames=FALSE)
+  output$table2 <- renderTable({
+    data<-OutputTable()
+    rownames(data) <- NULL
+    data},include.rownames=FALSE)
+  
+  #######Outliers Tab#######
+  
+  OutliersSelection<- reactive({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    
+    insample <- ts(upx()$QTY[upx()$Date<FirstForecast],start=c(FirstYear,FirstMonth), frequency=12)
+    
+    RemoveOutlier<-RemoveOutliers(insample,observations=length(upx()$QTY[upx()$Date<FirstForecast]),type1=input$ao, type2=input$ls, type3=input$tc)
+    NoOutliers<-RemoveOutlier#$Outinsample
+    NoOutliers
+  })
+  OutliersTable1<-reactive({
+    
+    data2<-as.data.frame(as.numeric(OutliersSelection()[[1]])) 
+    colnames(data2)<-"outliers"
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    
+    
+    insample <- head(upx()$QTY, length(OutliersSelection()[[1]]))
+    insample<-as.numeric(insample)
+    
+    data2$originaldata<-insample
+    data2$index<-1:nrow(data2)
+    datatable<-as.data.frame(data2)
+    colnames(datatable)[colnames(datatable)=="outliers"] <- "Adjusted Timeseries"
+    colnames(datatable)[colnames(datatable)=="originaldata"] <- "Original Timeseries"
+    datatable<-datatable[,c("Original Timeseries","Adjusted Timeseries")]
+    datatable
+    
+  })
+  output$OutliersTable<-renderTable({
+    OutliersTable1()
+  })
+  output$OutliersPlot<- renderChart2({
+    data2<-as.data.frame(as.numeric(OutliersSelection()[[1]])) 
+    colnames(data2)<-"outliers"
+    
+    validate(
+      need((data2$outliers != head(upx()$QTY, length(OutliersSelection()[[1]]))) , 'No outliers') 
+    )
+    
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    
+    
+    insample <- head(upx()$QTY, length(OutliersSelection()[[1]]))
+    
+    data2$originaldata<-insample
+    colnames(data2)[which(names(data2) == "outliers")] <- "Adjusted Timeseries"
+    colnames(data2)[which(names(data2) == "originaldata")] <- "Original Timeseries"
+    data2$TC<-OutliersSelection()[[6]]
+    data2$AO<-OutliersSelection()[[5]]
+    data2$LS<-OutliersSelection()[[4]]
+    typeframe<-OutliersSelection()[[3]]
+    typeframe$rn<-1:nrow(typeframe)
+    otype<-dcast(typeframe, rn ~ type, value.var="value")
+    
+    data2$index<-1:nrow(data2)
+    
+    
+    datamelt<-melt(data2,id="index")
+    h11 = hPlot(x = "index", y = "value",group = "variable", data = datamelt, type = "line")
+    # h11$chart(height=500, width=700)
+    
+    h11$params$width <- 800
+    h11$title(text = "Outliers")
+    h11$exporting(enabled = T)
+    h11$chart(zoomType = "xy")
+    h11$yAxis(title="")
+    return(h11)
+    
+  })
+  
+  ######End Of Outliers######
+  
+  #############Smoothing Tab######
+  
+  smb<-reactive({
+    if (input$removeoutlierssm == T){
+      insample<-ts(OutliersTable1()[,c("Adjusted Timeseries")])
+    }else{
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    
+    insample <- ts(upx()$QTY[upx()$Date<FirstForecast])
+    }
+    if (input$decomposesm== T){
+      TestSeasonal<-SeasonalityTest(InSample=insample, ppy=input$decfr,ForecastHorizon=input$horizonin)
+      insample<-TestSeasonal$DeseasonalizedTS
+    }
+    TestSeasonal<-SeasonalityTest(InSample=insample, ppy=12 ,ForecastHorizon=input$horizonin)
+    NewInSample<-TestSeasonal$DeseasonalizedTS
+    smoothwmethod(NewInSample,input$smoothmethodin,input$imain)
+    #Non_linear_Smooth(NewInSample,limit=1,criterion="S")
+  })
+  output$smtab2<-renderDataTable({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    data<-as.data.frame(cbind(round(smb(),2),upx()$QTY[upx()$Date<FirstForecast]))
+    colnames(data)<-c("Smooth","Original")
+    data
+    
+  })
+  output$plotsm<-renderChart2({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    insample <- upx()$QTY[upx()$Date<FirstForecast]
+    
+    dataaa<-as.data.frame(smb())
+    dataaa$original<-insample
+    dataaa$r<-as.numeric(row.names(dataaa))
+    colnames(dataaa)<-c("Smooth","Original","Row Name")
+    simsubmelt<- melt(dataaa,id="Row Name")
+    #     output$test<-renderTable({
+    #       dataaa<-dataaa[,c( "Original","Smooth")]
+    #       dataaa
+    #     })
+    h13 = hPlot( x='Row Name', y = "value", group = "variable", data = simsubmelt, type = "line")
+    return(h13)
+  })
+  
+  ######End of Smoothing Tab######
+  
+  ##########Decomposition Tab##########
+  output$decompositiontext<-renderText({
+    if (input$decfr=="Unknown"){
+      if (input$removeoutliersdec==F){
+        indata<-upx()
+        indata[is.na(indata)] <- 0 
+        FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+        FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+        FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+        InSample <- ts(indata$QTY[indata$Date<FirstForecast])
+        InSample[is.na(InSample)] <- 0
+      }else{
+        InSample<-ts(OutliersTable1()[,c("Adjusted Timeseries")])
+      }
+      
+      ppy=input$decfr
+      if (ppy=='Unknown')
+        ppy = findppy(InSample, 1.645)
+      ppy<-as.numeric(ppy)
+      tout<-paste0("Unknown decomposition frequency is selected. The frequency used is the one that fits the model the best. (Automatically selected frequency = ",ppy," )")
+    }else{
+      tout=""
+    }
+    tout
+  })
+  decompositionprob<-reactive({
+    if (input$removeoutliersdec==F){
+    indata<-upx()
+    indata[is.na(indata)] <- 0 
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    InSample <- ts(indata$QTY[indata$Date<FirstForecast])
+    InSample[is.na(InSample)] <- 0
+    }else{
+      InSample<-ts(OutliersTable1()[,c("Adjusted Timeseries")])
+    }
+    
+    ppy=input$decfr
+    if (ppy=='Unknown')
+      ppy = findppy(InSample, 1.645)
+    ppy<-as.numeric(ppy)
+    
+    sumacf=0
+    acfc = acf(InSample, lag.max = ppy ,type = c("correlation"),plot = FALSE, demean = TRUE)
+    for (r in 2:(ppy-1)){
+      sumacf = sumacf + (acfc$acf[r+1])^2
+    }
+    limits = 1.645*((1 + 2*(acfc$acf[2]+sumacf))/length(InSample))^0.5
+    decompositionprob=pt(abs(acfc$acf[ppy+1])/(((1 + 2*(acfc$acf[2]+sumacf))/length(InSample))^0.5), df=Inf)
+    decompositionprob
+  })
+  output$DecProb<-renderValueBox({
+    valueBox(
+      round(as.numeric(decompositionprob()),2), "Probability", icon = icon("bar-chart"),
+      color = "light-blue"
+    )
+  })
+  Decomposition<- reactive({
+    
+    if (input$removeoutliersdec==F){
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    indata<-upx()
+    indata[is.na(indata)] <- 0 
+    insample <- ts(indata$QTY[indata$Date<FirstForecast])
+    }else{
+      insample<-ts(OutliersTable1()[,c("Adjusted Timeseries")])}
+    
+    output$testtab<-renderText({as.numeric(insample)})
+    ppy<-input$decfr
+    if ((ppy=='NULL')||(ppy=='Unknown'))
+      ppy = findppy(insample, 1.645)
+    ppy<-as.numeric(ppy)
+    
+    dec<-DecomposeC(insample,as.numeric(ppy))
+    dec
+    
+  })
+  output$testdec<-renderText({FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+  FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+  FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+  indata<-upx()
+  indata[is.na(indata)] <- 0 
+  insample <- ts(indata$QTY[indata$Date<FirstForecast])
+  length(insample)})
+  output$decRandomness<-renderChart2({
+    data<-Decomposition()
+    data$Observations<-as.numeric(row.names(data))
+    h1 = hPlot( x='Observations', y='Randomness', data = data, type = "line")
+    
+    return (h1)
+  })
+  output$decSeasonality<-renderChart2({
+    data<-Decomposition()
+    data$Observations<-as.numeric(row.names(data))
+    h2 = hPlot( x='Observations', y='Seasonality', data = data, type = "line")
+    
+    return (h2)
+  })
+  output$decCyrcle<-renderChart2({
+    data<-Decomposition()
+    data$Observations<-as.numeric(row.names(data))
+    h3 = hPlot( x='Observations', y='Cyrcle', data = data, type = "line")
+    
+    return (h3)
+  })
+  output$decTrend<-renderChart2({
+    data<-Decomposition()
+    data$Observations<-as.numeric(row.names(data))
+    h4 = hPlot( x='Observations', y='Trend', data = data, type = "line")
+    
+    return (h4)
+  })
+  output$decLE<-renderChart2({
+    data<-Decomposition()$LE
+    if (input$removeoutliersdec==F){
+      indata<-upx()
+      indata[is.na(indata)] <- 0 
+      FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+      FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+      FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+      InSample <- ts(indata$QTY[indata$Date<FirstForecast])
+      InSample[is.na(InSample)] <- 0
+    }else{
+      InSample<-ts(OutliersTable1()[,c("Adjusted Timeseries")])
+    }
+    
+    ppy=input$decfr
+    if (ppy=='Unknown')
+      ppy = findppy(InSample, 1.645)
+    ppy<-as.numeric(ppy)
+    max <- ppy
+    
+    x <- seq_along(data)
+    dataLE <- split(data, ceiling(x/max))
+    dataLE <- as.data.frame(dataLE)
+    dataLE$Observations<-as.numeric(row.names(dataLE))
+    simsubmelt = melt(dataLE,id="Observations")
+    h6 = hPlot( x='Observations', y = "value", group = "variable", data = simsubmelt, type = "line")
+    
+    
+    return (h6)
+  })
+  output$decPlot<-renderChart2({
+        FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+        FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+        FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+        indata<-upx()
+        indata[is.na(indata)] <- 0 
+        insample <- ts(indata$QTY[indata$Date<FirstForecast])
+        if (input$removeoutliersdec==F){
+    
+          outliers <-insample
+        }else{
+          
+          outliers<-ts(OutliersTable1()[,c("Adjusted Timeseries")])}
+        
+        
+         data<-as.data.frame(Decomposition()[,c("Data","Deseasonalized")])
+     #   data<-data[,c("Deseasonalized")]
+        data$Original<-insample
+        colnames(data)[which(names(data) == "Original")] <- "Original Timeseries"
+        colnames(data)[which(names(data) == "Deseasonalized")] <- "Adjusted Timeseries"
+        colnames(data)[which(names(data) == "Data")] <- "Timeseries Without Outliers"
+    #  data$Outliers<-outliers
+    #    colnames(data[,c("Deseasonalized","Original","Outliers")])<-c("Deseasonalised Data","Original Data", "Data Without Outliers")
+         data$Observations<-as.numeric(row.names(data))
+         datamelt<-melt(data, id="Observations")
+    h22 = hPlot( x='Observations', y='value',group="variable", data = datamelt , type = "line")
+    
+    return (h22)
+  })
+  
+  #########End of Decomposition########
+  
+  output$plot <- renderChart2({
+    datatable<-FinalTable()
+    colnames(datatable)[colnames(datatable)=="Date"] <- "TimeStamp"
+    colnames(datatable)[colnames(datatable)=="qvalue"] <- "Value"
+    colnames(datatable)[colnames(datatable)=="qvaluec"] <- "Value Deseasonalized"
+    colnames(datatable)[colnames(datatable)=="fqvalueb"] <- "Value Forecast"
+    
+    #Add Confidence Levels
+    if (input$clin!="none"){
+      TSSY<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+      TSSM<- as.numeric(substr(as.character(dateinput()[2]),6,7))
+      qtycl1a<-ts(forecastQTYe()$CL1,frequency=12,start = c(as.numeric(TSSY),as.numeric(TSSM)))
+      qtycl1.m<- data.frame(yr=round(time(qtycl1a), digits = 2),qtycl1=as.matrix(qtycl1a))
+      datatable<-merge(datatable,qtycl1.m,by = "yr", all=TRUE)
+      qtycl2a<-ts(forecastQTYe()$CL2,frequency=12,start = c(as.numeric(TSSY),as.numeric(TSSM)))
+      qtycl2.m<- data.frame(yr=round(time(qtycl2a), digits = 2),qtycl2=as.matrix(qtycl2a))
+      datatable<-merge(datatable,qtycl2.m,by = "yr", all=TRUE)
+      colnames(datatable)[colnames(datatable)=="qtycl1"] <- "Confidence Level 1"
+      colnames(datatable)[colnames(datatable)=="qtycl2"] <- "Confidence Level 2"}
+    if (input$outliersin==TRUE) {
+      colnames(datatable)[colnames(datatable)=="qvalueb"] <- "Value No Outliers"
+      if (input$clin!="none"){            
+        if ((forecastQTY()$method=='MAPA')||(forecastQTY()$method=='ETS')||(forecastQTY()$method=='ARIMA')){
+          simsub = datatable[,c("DatePlot", "Value", "Value Forecast", "Confidence Level 1","Confidence Level 2",  "Value No Outliers")] 
+        }
+        else{
+          simsub = datatable[,c("DatePlot", "Value", "Value Forecast","Value Deseasonalized" , "Confidence Level 1","Confidence Level 2",  "Value No Outliers")] 
+        }
+      }
+      else{
+        if ((forecastQTY()$method=='MAPA')||(forecastQTY()$method=='ETS')||(forecastQTY()$method=='ARIMA')){
+          simsub = datatable[,c("DatePlot", "Value", "Value Forecast" ,  "Value No Outliers")]
+        }
+        else {
+          simsub = datatable[,c("DatePlot", "Value", "Value Forecast","Value Deseasonalized" ,  "Value No Outliers")]
+          
+        }
+      }       
+    }
+    else {
+      if (input$clin!="none"){            
+        if ((forecastQTY()$method=='MAPA')||(forecastQTY()$method=='ETS')||(forecastQTY()$method=='ARIMA')){
+          simsub = datatable[,c("DatePlot", "Value", "Value Forecast", "Confidence Level 1","Confidence Level 2")] 
+        }
+        else{
+          simsub = datatable[,c("DatePlot", "Value", "Value Forecast","Value Deseasonalized" , "Confidence Level 1","Confidence Level 2")] 
+          
+        }
+      }
+      else{
+        if ((forecastQTY()$method=='MAPA')||(forecastQTY()$method=='ETS')||(forecastQTY()$method=='ARIMA')){
+          simsub = datatable[,c("DatePlot", "Value","Value Forecast")] 
+        }
+        else {
+          simsub = datatable[,c("DatePlot", "Value","Value Forecast","Value Deseasonalized")] 
+          
+        }
+      }
+    }
+    
+    simsubmelt = melt(simsub,id="DatePlot")
+    
+    h5 = hPlot(x = "DatePlot", y = "value", group = "variable", data = simsubmelt, type = "line")
+    if (input$clin!="none"){
+      h5$colors('rgba(166, 9, 44, 0.6)', 'rgba(166, 9, 44, 0.6)','rgba(43, 42, 42, 1.0)', 'rgba(87, 100, 254, 0.6)' ,'rgba(76, 162, 237, 1)', 'rgba(25,25,112, 0.2)')
+    }
+    else {
+      h5$colors( 'rgba(43, 42, 42, 1.0)', 'rgba(87, 100, 254, 0.6)' ,'rgba(76, 162, 237, 1)', 'rgba(25,25,112, 0.2)')}
+    
+    h5$title(text = forecastQTY()$method)
+    h5$exporting(enabled = T)
+    h5$chart(zoomType = "xy")
+    h5$yAxis(title="")
+    h5$xAxis(type = 'datetime', format = "%Y")  
+    h5$tooltip(formatter = "#!  function(key, x, y){ 
+                var monthNames = [ 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December' ];
+                return 'Date: '+monthNames[((new Date(this.point.x)).getMonth())] + ' ' +(new Date(this.point.x)).getFullYear()  + '<br>'  +'Value: ' + this.point.y 
+  } !#")
+    return(h5)
+  })  
+  
+  ########INTERMITTENT DEMAND FORECASTS############
+  
+  output$interplot <- renderChart2({
+    datatable<-FinalTable()
+    colnames(datatable)[colnames(datatable)=="Date"] <- "TimeStamp"
+    colnames(datatable)[colnames(datatable)=="qvalue"] <- "Value"
+    colnames(datatable)[colnames(datatable)=="qvaluec"] <- "Value Deseasonalized"
+    colnames(datatable)[colnames(datatable)=="fqvalueb"] <- "Value Forecast"
+    
+    #Add Confidence Levels
+    if (input$clin!="none"){
+      TSSY<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+      TSSM<- as.numeric(substr(as.character(dateinput()[2]),6,7))
+      qtycl1a<-ts(forecastQTYe()$CL1,frequency=12,start = c(as.numeric(TSSY),as.numeric(TSSM)))
+      qtycl1.m<- data.frame(yr=round(time(qtycl1a), digits = 2),qtycl1=as.matrix(qtycl1a))
+      datatable<-merge(datatable,qtycl1.m,by = "yr", all=TRUE)
+      qtycl2a<-ts(forecastQTYe()$CL2,frequency=12,start = c(as.numeric(TSSY),as.numeric(TSSM)))
+      qtycl2.m<- data.frame(yr=round(time(qtycl2a), digits = 2),qtycl2=as.matrix(qtycl2a))
+      datatable<-merge(datatable,qtycl2.m,by = "yr", all=TRUE)
+      colnames(datatable)[colnames(datatable)=="qtycl1"] <- "Confidence Level 1"
+      colnames(datatable)[colnames(datatable)=="qtycl2"] <- "Confidence Level 2"}
+    if (input$outliersin==TRUE) {
+      colnames(datatable)[colnames(datatable)=="qvalueb"] <- "Value No Outliers"
+      if (input$clin!="none"){            
+        if ((forecastQTY()$method=='MAPA')||(forecastQTY()$method=='ETS')||(forecastQTY()$method=='ARIMA')){
+          simsub = datatable[,c("DatePlot", "Value", "Value Forecast", "Confidence Level 1","Confidence Level 2",  "Value No Outliers")] 
+        }
+        else{
+          simsub = datatable[,c("DatePlot", "Value", "Value Forecast","Value Deseasonalized" , "Confidence Level 1","Confidence Level 2",  "Value No Outliers")] 
+        }
+      }
+      else{
+        if ((forecastQTY()$method=='MAPA')||(forecastQTY()$method=='ETS')||(forecastQTY()$method=='ARIMA')){
+          simsub = datatable[,c("DatePlot", "Value", "Value Forecast" ,  "Value No Outliers")]
+        }
+        else {
+          simsub = datatable[,c("DatePlot", "Value", "Value Forecast","Value Deseasonalized" ,  "Value No Outliers")]
+          
+        }
+      }       
+    }
+    else {
+      if (input$clin!="none"){            
+        if ((forecastQTY()$method=='MAPA')||(forecastQTY()$method=='ETS')||(forecastQTY()$method=='ARIMA')){
+          simsub = datatable[,c("DatePlot", "Value", "Value Forecast", "Confidence Level 1","Confidence Level 2")] 
+        }
+        else{
+          simsub = datatable[,c("DatePlot", "Value", "Value Forecast","Value Deseasonalized" , "Confidence Level 1","Confidence Level 2")] 
+          
+        }
+      }
+      else{
+        if ((forecastQTY()$method=='MAPA')||(forecastQTY()$method=='ETS')||(forecastQTY()$method=='ARIMA')){
+          simsub = datatable[,c("DatePlot", "Value","Value Forecast")] 
+        }
+        else {
+          simsub = datatable[,c("DatePlot", "Value","Value Forecast","Value Deseasonalized")] 
+          
+        }
+      }
+    }
+    
+    simsubmelt = melt(simsub,id="DatePlot")
+    
+    h20 = hPlot(x = "DatePlot", y = "value", group = "variable", data = simsubmelt, type = "line")
+    if (input$clin!="none"){
+      h20$colors('rgba(166, 9, 44, 0.6)', 'rgba(166, 9, 44, 0.6)','rgba(43, 42, 42, 1.0)', 'rgba(87, 100, 254, 0.6)' ,'rgba(76, 162, 237, 1)', 'rgba(25,25,112, 0.2)')
+    }
+    else {
+      h20$colors( 'rgba(43, 42, 42, 1.0)', 'rgba(87, 100, 254, 0.6)' ,'rgba(76, 162, 237, 1)', 'rgba(25,25,112, 0.2)')}
+    
+    
+    h20$title(text = forecastQTY()$method)
+    h20$exporting(enabled = T)
+    h20$chart(zoomType = "xy")
+    h20$yAxis(title="")
+    h20$xAxis(type = 'datetime', format = "%Y")  
+    h20$tooltip(formatter = "#!  function(key, x, y){ 
+               var monthNames = [ 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December' ];
+               return 'Date: '+monthNames[((new Date(this.point.x)).getMonth())] + ' ' +(new Date(this.point.x)).getFullYear()  + '<br>'  +'Value: ' + this.point.y 
+  } !#")
+    return(h20)
+  })  
+  #################################################
+  
+  output$CLTable<-renderTable({
+    if (input$clin!="none"){
+      data<-data.frame(ID=1:input$horizonin)
+      display<-data
+      title1<-c(" ")
+      title2<-c(" ")
+      data$QTYforecasts<-as.numeric(as.character(forecastQTYe()$forecasts))
+      data$QTYCL1<-forecastQTYe()$CL1
+      data$QTYCL2<-as.numeric(as.character(forecastQTYe()$CL2))
+      colnames(data)[colnames(data)=="QTYCL1"] <- "Value:Upper Confidence Level"
+      colnames(data)[colnames(data)=="QTYCL2"] <- "Value:Lower Confidence Level"
+      colnames(data)[colnames(data)=="QTYforecasts"] <- "Value Forecast"
+      display<-cbind(display,data[,c( "Value Forecast","Value:Upper Confidence Level","Value:Lower Confidence Level")])
+      title1<-c(title1, "", "waterdemand", "")
+      title2<-c(title2, "Forecast", "Upper Confidence Level", "Lower Confidence Level")
+      display
+    }
+  },include.rownames=FALSE)
+  
+  ###########Error Tab##########
+  
+  output$errortable<- renderTable({
+    errors()
+  },include.rownames=FALSE)
+  errors <-reactive({
+    
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    
+    insample <- ts(upx()$QTY[upx()$Date<=FirstForecast],frequency=1) 
+    error1<-ErrorsCalculation(head(FinalTable()$fqvalue, length(insample)), head(FinalTable()$qvalue, length(insample)))
+    errorqty<-t(error1[[2]])
+    errorqty[1]<-as.character(round(as.numeric(errorqty[1]) , digits = 2))
+    errorqty[2]<-paste(round(as.numeric(errorqty[2]) , digits = 2)," %", sep="")
+    errorqty[3]<-paste(round(as.numeric(errorqty[3]) , digits = 2)," %", sep="") 
+    errorqty[4]<-as.character(round(as.numeric(errorqty[4]) , digits = 2))
+    errorqty[5]<-paste(round(as.numeric(errorqty[5]) , digits = 2)," %", sep="")
+    errorqty
+  })
+  output$errorscatter<-renderChart2({
+    
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    
+    insample <- ts(upx()$QTY[upx()$Date<FirstForecast],frequency=1) 
+    scdata<-data.frame(cbind(head(FinalTable()$fqvalue, length(insample)),head(FinalTable()$qvalue, length(insample))))
+    
+    colnames(scdata)<-c("Forecast Model","Insample")
+    scdata$insample2<-scdata$Insample  
+    scdatamelt<-melt(scdata,id="Insample")
+    h14 = hPlot(x = "Insample", y = "value",group="variable", data = scdatamelt, type = "scatter")
+    h14$title(text = "Insample-Forecast Model")
+    h14$exporting(enabled = T)
+    h14$chart(zoomType = "xy")
+    return(h14)
+  })
+  output$mescatter<-renderChart2({
+    
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    
+    insample <- ts(upx()$QTY[upx()$Date<FirstForecast],frequency=1) 
+    error1<-ErrorsCalculation(head(FinalTable()$fqvalue, length(insample)), head(FinalTable()$qvalue, length(insample)))
+    errorqty<-t(error1[[1]])
+    colnames(errorqty)<-c("e","pe","ape","se","sape")
+    scdata<-data.frame(rn=1:length(errorqty[,c("e")]))
+    scdata$error<-errorqty[,c("e")]
+    
+    h16 = hPlot(x = "rn", y = "error", data = scdata, type = "column")
+    h16$title(text = "Insample-Forecast Model: Errors")
+    h16$exporting(enabled = T)
+    h16$chart(zoomType = "xy")
+    return(h16)
+  })
+  output$forecasterrortable<- renderTable({
+    forecasterrors()
+  },include.rownames=FALSE)
+  forecasterrors <-reactive({
+    
+    
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    
+    insample <- ts(upx()$QTY[upx()$Date<=FirstForecast],frequency=1) 
+    allsample<-ts(upx()$QTY,frequency=1)
+    lengthdfa<-length(allsample)-length(insample)
+    if (length(insample)<length(upx()$QTY)) {
+      dfa<-tail(upx()$QTY,as.numeric(lengthdfa))
+    }else{
+      dfa<-NULL
+    }
+    dfb<-finalforecasts()
+    if (length(na.omit(dfa))>=length(na.omit(dfb))) {
+      yd<-as.numeric(input$horizonin)
+      
+    } else{
+      yd<-length(dfa)
+      
+    }
+    df1<-head(dfa,yd)
+    df2<-head(dfb,yd)
+    
+    
+    
+    errorqty1a<-ErrorsCalculation(df1, df2)
+    
+    errorqty<-t(errorqty1a[[2]])
+    errorqty[1]<-as.character(round(as.numeric(errorqty[1]) , digits = 2))
+    errorqty[2]<-paste(round(as.numeric(errorqty[2]) , digits = 2)," %", sep="")
+    errorqty[3]<-paste(round(as.numeric(errorqty[3]) , digits = 2)," %", sep="") 
+    errorqty[4]<-as.character(round(as.numeric(errorqty[4]) , digits = 2))
+    errorqty[5]<-paste(round(as.numeric(errorqty[5]) , digits = 2)," %", sep="")
+    errorqty  
+  })
+  output$forecasterrorscatter<-renderChart2({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    
+    insample <- ts(upx()$QTY[upx()$Date<=FirstForecast],frequency=1) 
+    allsample<-ts(upx()$QTY,frequency=1)
+    lengthdfa<-length(allsample)-length(insample)
+    if (length(insample)<length(upx()$QTY)) {
+      dfa<-tail(upx()$QTY,as.numeric(lengthdfa))
+    }else{
+      dfa<-NULL
+    }
+    dfb<-finalforecasts()#tail(na.omit(FinalTable()[,c("fqvalue")]),input$horizonin)
+    if (length(na.omit(dfa))>=length(na.omit(dfb))) {
+      yd<-as.numeric(input$horizonin)
+      
+    } else{
+      yd<-length(dfa)
+      
+    }
+    df1<-as.data.frame(head(dfa,yd))
+    df2<-as.data.frame(head(dfb,yd))
+    
+    df1$rn<-1:yd
+    df2$rn<-1:yd
+    
+    scdata<-merge(df1,df2,by="rn",all.y=TRUE)
+    # scdata<-na.omit(scdata)
+    colnames(scdata)<-c("rn","Out Of Sample","Forecasts")
+    scdata<-scdata[,c("Out Of Sample","Forecasts")]
+    scdata$OutOfSample<-scdata[,c("Out Of Sample")]
+    scdatamelt<-melt(scdata,id="OutOfSample")  
+    h15 = hPlot(x = "OutOfSample", y = "value",group="variable", data = scdatamelt, type = "scatter")
+    h15$title(text = "Insample-Forecast Model")
+    h15$exporting(enabled = T)
+    h15$chart(zoomType = "xy")
+    return(h15)
+  })
+  output$forecastmescatter<-renderChart2({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    
+    insample <- ts(upx()$QTY[upx()$Date<=FirstForecast],frequency=1) 
+    allsample<-ts(upx()$QTY,frequency=1)
+    lengthdfa<-length(allsample)-length(insample)
+    if (length(insample)<length(upx()$QTY)) {
+      dfa<-tail(upx()$QTY,as.numeric(lengthdfa))
+    }else{
+      dfa<-NULL
+    }
+    dfb<-finalforecasts()#tail(na.omit(FinalTable()[,c("fqvalue")]),input$horizonin)
+    if (length(na.omit(dfa))>=length(na.omit(dfb))) {
+      yd<-as.numeric(input$horizonin)
+      
+    } else{
+      yd<-length(dfa)
+      
+    }
+    df1<-head(dfa,yd)
+    df2<-head(dfb,yd)
+    
+    errorqty1a<-ErrorsCalculation(df1, df2)
+    
+    errorqty<-t(errorqty1a[[1]])
+    colnames(errorqty)<-c("e","pe","ape","se","sape")
+    scdata<-data.frame(rn=1:length(errorqty[,c("e")]))
+    scdata$error<-errorqty[,c("e")]
+    scdata$zero<-0
+    scdatamelt<-melt(scdata,id="rn")
+    h17 = hPlot(x = "rn", y = "error", data = scdata, type = "column")
+    
+    h17$title(text = "Out Of Sample-Forecasts: Errors")
+    h17$exporting(enabled = T)
+    h17$chart(zoomType = "xy")
+    return(h17)
+  })
+  
+  #########End of Error########
+  
+  ###########Temporal Aggregation Tab##########
+  
+  taggdata<-reactive({
+    FirstYear<-as.numeric(substr(as.character(dateinput()[2]),1,4))
+    FirstMonth<-as.numeric(substr(as.character(dateinput()[2]),6,7))
+    FirstForecast <-100*FirstYear+FirstMonth #Get first forecast
+    insample <- ts(upx()$QTY[upx()$Date<=FirstForecast],frequency=1)
+    
+    tagd<-taggregation(insample,12)
+    tagd<-as.data.frame(tagd)
+    rowz<-1:nrow(tagd)
+    tagd<-cbind(tagd,rowz)
+    
+  })
+  output$taggtable<-renderDataTable({
+    
+    DF<-as.data.frame(taggdata())
+    colnames(DF)<-c("Monthly Model","Annual Model","Half-Year Model","Quarterly Model", "Tertile Model", "Bimonthly Model","rowz")
+    DF[,-which(names(DF) == "rowz")] 
+  })
+  output$taggplot<-renderChart2({
+    data<-taggdata()
+    colnames(data)<-c("Monthly Model","Annual Model","Half-Year Model","Quarterly Model", "Tertile Model", "Bimonthly Model", "rowz")
+    simsubmelt = melt(data,id="rowz")
+    h18 = hPlot( x='rowz', y = "value", group = "variable", data = simsubmelt, type = "line")
+    h18$chart(zoomType = "xy")
+    h18$colors('rgba(63, 127, 191, 1)', 'rgba(63, 63, 191, 0.5)','rgba(36, 141, 183, 0.84)', 'rgba(52, 166, 136,1)', 'rgba(87, 100, 254, 0.6)' , 'rgba(25,25,112, 0.5)')
+    return (h18)
+  })
+  
+  
+  output$downloadData <- downloadHandler(
+    filename = function() {
+      paste('data-', Sys.Date(), '.csv', sep='')
+    },
+    content = function(file) {
+      write.csv(OutputTable(), file,fileEncoding ='UTF-8',row.names=FALSE)
+    }
+  )
+  output$downloadOutData <- downloadHandler(
+    filename = function() {
+      paste('outlierdata-', Sys.Date(), '.csv', sep='')
+    },
+    content = function(file) {
+      write.csv(OutliersTable1(), file,fileEncoding ='UTF-8',row.names=FALSE)
+    }
+  )
+  output$downloadReport <- downloadHandler(
+    filename = function() {
+      paste('Report', sep = '.', switch(
+        input$format, PDF = 'pdf', HTML = 'html', Word = 'docx'
+      ))
+    },
+    
+    content = function(file) {
+      src <- normalizePath('Report.Rmd')
+      
+      # temporarily switch to the temp dir, in case you do not have write
+      # permission to the current working directory
+      owd <- setwd(tempdir())
+      on.exit(setwd(owd))
+      file.copy(src, 'Report.Rmd')
+      
+      library(rmarkdown)
+      out <- render('Report.Rmd', switch(
+        input$format,
+        PDF = pdf_document(), HTML = html_document(), Word = word_document()
+      ))
+      file.rename(out, file)
+    }
+  )
+})

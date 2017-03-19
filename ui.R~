@@ -1,0 +1,391 @@
+library(rCharts)
+library(shinydashboard)
+library(rhandsontable)
+
+
+shinyUI(
+
+  dashboardPage(
+    
+    
+    
+    dashboardHeader(
+      title= "omen",
+      dropdownMenuOutput(outputId="AboutMenu"),
+      dropdownMenuOutput(outputId="homehelp")
+    
+    ),
+    dashboardSidebar( 
+      sidebarMenu(id ="activetab",
+                  menuItem("Home", tabName = "welcome", icon = icon("home")),
+                  menuItem("Inputs", tabName = "home", icon = icon("gears")),
+                  menuItem("Statistics", tabName = "stats", icon = icon("signal")),
+                  menuItem("Missing Values", tabName = "misd", icon = icon("pencil-square-o")),
+                  menuItem("Outliers", tabName = "tso", icon = icon("area-chart")),
+                  menuItem("Decompose", tabName = "decompose", icon = icon("sitemap")),
+                  menuItem("Smoothing", tabName = "smooth", icon = icon("level-down")),
+                  menuItem("Temporal Aggregation", tabName = "tempag", icon = icon("cubes")),
+                  menuItem("Forecasts", tabName = "data", icon = icon("line-chart")),
+                  menuItem("Intermittent Demand Forecasts", tabName = "interdata", icon = icon("line-chart")),
+                  menuItem("Judgemental Forecasts", tabName = "judge", icon = icon("arrows-v",lib = "font-awesome")),
+                  menuItem("Errors", tabName = "errors", icon = icon("thumb-tack")),
+                  menuItem("Export Report", tabName = "export", icon = icon("download"))
+                  
+                  
+      )
+    ),
+    dashboardBody(  
+  #    tags$style(type="text/css",
+  #               ".shiny-output-error { visibility: hidden; }",
+  #               ".shiny-output-error:before { visibility: visible; content: 'An error occurred. Please contact the admin.'; }"
+  #    ),
+      includeCSS("custom.css"),
+      tags$head(
+        tags$link(rel = "stylesheet", type = "text/css", href = "custom.css")
+      ),
+      tabItems(
+        tabItem(tabName="welcome",
+                column(width=7,
+                       fluidRow(
+                         h3("Login to your Account, Create a new account or, if you prefer, continue to upload a file without an account in the next tab!"),
+                         fluidRow(
+                           box(title="Signin/Signup",status="primary",width=12,
+                               radioButtons("loginchoice", "Choose An Option", c("Continue Without Account"="GUEST", "Sign in"="IN", "Sign up"="UP"))),
+                           conditionalPanel(
+                             condition = "input.loginchoice == 'IN'",
+                           box(  title="Login",status="primary",width=12,
+                                 uiOutput('uiLogin'))),
+                           conditionalPanel(
+                           condition = "input.loginchoice == 'UP'",
+                           box( status="primary",width=12,
+                                uiOutput('uiNewAccount')))
+                          # conditionalPanel(
+                             #condition = "input.Logged == 'GUEST'",
+                      #       textOutput("welcometext"),
+                       #   textOutput("testtest")
+                             #)
+                           ))
+
+                ),
+                column(width=5,
+                       fluidRow(
+                         uiOutput("userinfo")
+                       ))
+                ),
+        tabItem(tabName="home",
+                column(width=7,
+                fluidRow(
+                 
+                box( title="Inputs",status="primary",width=12,
+                     fileInput('file1', 'Choose file to upload',
+                               accept = c(
+                                 'text/csv',
+                                 'text/comma-separated-values',
+                                 'text/tab-separated-values',
+                                 'text/plain',
+                                 '.csv',
+                                 '.tsv'
+                               )
+                     ),
+                     checkboxInput('header', 'Header', TRUE),
+                     radioButtons('sep', 'Separator',
+                                  c(Comma=',',
+                                    Semicolon=';',
+                                    Tab='\t'),
+                                  ','),
+                     selectInput("ppyin", label="Frequency:", choices =c("Unknown"="Unknown", "1"=1, "2"=2, "3"=3, "4"=4, "12"=12)),
+                     dateRangeInput("dates", label = "Date Selection:", start  = "1983-01-02", end    = "1992-01-02",startview = "decade")
+                    
+                )),
+                fluidRow(
+                  
+                  
+                box( title="View Imported Timeseries",status="primary",width=12,
+                     
+                     showOutput("inputplot", "highcharts"),
+                     HTML('<style>.rChart {width: 100%; height: 600px}</style>')))),
+                column(width=3,
+                       
+                       fluidRow(
+textOutput("loggeduser"),
+                         conditionalPanel("output.loggeduser=='TRUE'",
+                                          box( title="Save Input Timeseries to my Account",status="primary",width=12,
+                                               textInput("savefiletitle", "Save Timeseries As", ""),
+                                               actionButton("savefile1", "Save"),
+                                               textOutput("savetitlemsg")
+                                          )),
+                         box( title="View Imported Timeseries",status="primary",width=12,
+                              
+                     
+                #editable table
+                rHandsontableOutput("tbl"))
+                
+                
+                ))
+)
+                #to show saved edits)
+                
+        
+        ,
+        tabItem(tabName = "data",
+                column(width=7,
+                       fluidRow(
+                         box(title="Forecast Variables",width=12, collapsible=T,  status="primary",
+                             
+                             
+                             selectInput("methodin", label="Method:", choices =c("Optimal", "Naive","MAPA", "ETS", "Theta", "ARIMA", "SES", "Holt", "Damped"), selected="Theta")
+                             ,
+                             checkboxInput("outliersin", label="Remove Outliers", value = FALSE),
+                             checkboxInput("smin", label="Data Smoothing",value=F),
+                             conditionalPanel(
+                               condition = "input.methodin != 'MAPA'",
+                               checkboxInput("tain", label="Temporal Aggregation",value=F))
+                             ,
+                             selectInput("clin", label="Confidence Levels:", choices =c("None"="none","99%"="2.58", "98%"="2.33", "95%"="1.96", "90%"="1.645", "80%"="1.28"),multiple=FALSE),
+                             sliderInput("horizonin", "Horizon:",min = 1, max = 36, value = 24),
+                             selectInput("ppyin2", label="Frequency:", choices =c("Unknown"="Unknown", "1"=1, "2"=2, "3"=3, "4"=4, "12"=12))
+                             
+                             
+                         )),  
+                       fluidRow(
+                         box(title="Plot",width=12, collapsible=T, status="primary", solidHeader = TRUE,
+                            #tableOutput("testtableee"),
+                             showOutput("plot", "highcharts"),
+                             HTML('<style>.rChart {width: 100%; height: 600px}</style>'))))
+                ,
+                column(width=3,
+                       fluidRow(box(title="Data", width=12, collapsible=T,status="primary", solidHeader = TRUE,div(style = 'overflow-x: scroll', tableOutput('table')), tableOutput('testtable'),div(style = 'overflow-x: scroll', tableOutput("CLTable")),downloadLink('downloadData', 'Download')))
+                ),
+                fluidRow()
+                
+                
+        ),
+        tabItem(tabName = "interdata",
+                column(width=7,
+                       fluidRow(
+                         box(title="Forecast Variables",width=12, collapsible=T,  status="primary",
+                             
+                             
+                             selectInput("methodin2", label="Method:", choices =c("iMAPA", "SBA","TSB", "Croston"), selected="Croston")
+                             ,
+#                              checkboxInput("outliersin2", label="Remove Outliers", value = FALSE),
+#                              checkboxInput("smin2", label="Data Smoothing",value=F),
+#                              conditionalPanel(
+#                                condition = "input.methodin != 'MAPA'",
+#                                checkboxInput("tain", label="Temporal Aggregation",value=F))
+#                              ,
+#                             selectInput("clin2", label="Confidence Levels:", choices =c("None"="none","99%"="2.58", "98%"="2.33", "95%"="1.96", "90%"="1.645", "80%"="1.28"),multiple=FALSE),
+                             sliderInput("horizonin2", "Horizon:",min = 1, max = 36, value = 24),
+                             checkboxInput("useinter", label="Use Intermittent Forecasts", value = FALSE)
+#                             selectInput("ppyin3", label="Frequency:", choices =c("Unknown"="Unknown", "1"=1, "2"=2, "3"=3, "4"=4, "12"=12))
+                             
+                             
+                         )),  
+                       fluidRow(
+                         box(title="Plot",width=12, collapsible=T, status="primary", solidHeader = TRUE,
+                             
+                             showOutput("interplot", "highcharts"),
+                             HTML('<style>.rChart {width: 100%; height: 600px}</style>'))))
+                ,
+                column(width=3,
+                       fluidRow(box(title="Data", width=12, collapsible=T,status="primary", solidHeader = TRUE,div(style = 'overflow-x: scroll', tableOutput('table2'))))
+                ),
+                fluidRow()
+                
+                
+        ),
+        tabItem(tabName = "decompose",
+                fluidRow(
+                  box(title="Decomposition Variables",width=8, status="primary",collapsible=T,
+                     # checkboxInput("removeoutliersdec", label="Remove Outliers",value = T),
+                      selectInput("decfr", label="Frequency:", choices =c("Unknown"="Unknown", "1"=1, "2"=2, "3"=3, "4"=4, "12"=12))#,
+                      #submitButton("Submit")  
+                      ,valueBoxOutput("DecProb"),
+                      textOutput("decompositiontext")
+                  )
+                ),
+                fluidRow(
+                  box(title="Randomness", status = "primary", solidHeader = TRUE,width=4, collapsible=T,
+                      showOutput("decRandomness", "highcharts"),
+                      HTML('<style>.rChart {width: 100%; height: 600px}</style>')),
+                  box(title="Cycle", status = "primary", solidHeader = TRUE,width=4, collapsible=T,
+                      showOutput("decCyrcle", "highcharts"),
+                      HTML('<style>.rChart {width: 100%; height: 600px}</style>'))
+                ),
+                fluidRow(
+                  box(title="Trend", status = "primary", solidHeader = TRUE,width=4, collapsible=T,
+                      showOutput("decTrend", "highcharts"),
+                      HTML('<style>.rChart {width: 100%; height: 600px}</style>')),
+                  box(title="Seasonality", status = "primary", solidHeader = TRUE,width=4, collapsible=T,  
+                      showOutput("decSeasonality", "highcharts"),
+                      HTML('<style>.rChart {width: 100%; height: 600px}</style>'))
+                ),
+                fluidRow(
+                  box(title="Seasonplot (LE)", status = "primary", solidHeader = TRUE,width=4, collapsible=T,
+                      showOutput("decLE", "highcharts"),
+                      HTML('<style>.rChart {width: 100%; height: 600px}</style>'), textOutput("testdec")   ),
+                  box(title="Decomposition Plot", status = "primary", solidHeader = TRUE,width=4, collapsible=T,  
+                      showOutput("decPlot", "highcharts"),
+                      HTML('<style>.rChart {width: 100%; height: 600px}</style>')))
+        ),
+        tabItem(tabName = "stats",
+                fluidRow(
+                  valueBoxOutput("MeanValue"),
+                  valueBoxOutput("MedianValue"),
+                  valueBoxOutput("RValue"))
+                
+                ,
+                fluidRow(
+                  valueBoxOutput("SdValue"),
+                  valueBoxOutput("CVValue"),
+                  valueBoxOutput("VarValue"))
+                ,
+                fluidRow(
+                  column(width=4,
+                         box(title="ACF", status = "primary", solidHeader = TRUE, collapsible=T,
+                             div(style = 'overflow-x: scroll', tableOutput("acfdata"))),
+                         box(title="PACF", status = "primary", solidHeader = TRUE, collapsible=T,
+                             div(style = 'overflow-x: scroll', tableOutput("pacfdata")))
+                  ),
+                  column(width=8,
+                         box(title="ACF", status = "primary", solidHeader = TRUE, collapsible=T,
+                             showOutput("acfplot", "highcharts"),
+                             HTML('<style>.rChart {width: 100%; height: 600px}</style>')),
+                         box(title="PACF", status = "primary", solidHeader = TRUE, collapsible=T,
+                             showOutput("pacfplot", "highcharts"),
+                             HTML('<style>.rChart {width: 100%; height: 600px}</style>')),
+                         box(title="Boxplot", status = "primary", solidHeader = TRUE, collapsible=T,
+                             showOutput("boxplot", "highcharts"),
+                             HTML('<style>.rChart {width: 100%; height: 600px}</style>'))
+                         
+                  )
+                )
+        ),
+        tabItem(tabName = "tso",
+                
+                column(width=7,
+                       fluidRow(
+                         box(title="Outlier to be considered.",width=12,status="primary",solidHeader=F, collapsible=TRUE,
+                             checkboxInput('ao', 'Additive Outliers (AO)', TRUE),
+                             checkboxInput('ls', 'Level Shifts (LS)', TRUE),
+                             checkboxInput('tc', 'Temporary Changes (TC)', TRUE),br(),
+                             checkboxInput('removeoutliersdec', "Consider Outlier Adjustments", TRUE)
+                             
+                         )
+                       ),
+                       fluidRow(box(title="Visualization of outlier adjustments",width=12,status="primary",solidHeader=TRUE, collapsible=TRUE,
+                                    showOutput("OutliersPlot", "highcharts"),
+                                    HTML('<style>.rChart {width: 100%; height: 600px}</style>')))
+                ),
+                
+                column(width=4,
+                       box(title="Type Of Outliers",width=12,status="primary",solidHeader=F, collapsible=TRUE,
+                           
+                           div(style = 'overflow-x: scroll', tableOutput("OutliersTable")), downloadLink('downloadOutData', 'Download')
+                       )),
+                fluidRow()),
+tabItem(tabName = "misd",
+        
+        column(width=7,
+               fluidRow(
+                 box(title="Missing Data",width=12,status="primary",solidHeader=F, collapsible=TRUE),
+                     valueBoxOutput("IDI")),
+        fluidRow())),
+        tabItem(tabName="errors",
+                fluidRow(
+                  box(title="Insample-Forecast Model Errors",width=3,status="primary",solidHeader=TRUE, collapsible=TRUE,
+                      div(style = 'overflow-x: scroll', tableOutput("errortable"))
+                      
+                  ),
+                  box(title="Out Of Sample-Forecasts Errors",width=3,status="primary",solidHeader=TRUE, collapsible=TRUE,
+                      div(style = 'overflow-x: scroll', tableOutput("forecasterrortable"))
+                      
+                  )
+                ),
+                fluidRow(
+                  box(title="Insample-Forecast Model Scatter Plot",status="primary",solidHeader=TRUE, collapsible=TRUE,
+                      showOutput("errorscatter", "highcharts"),
+                      HTML('<style>.rChart {width: 100%; height: 600px}</style>')
+                  ),
+                  box(title="Out Of Sample-Forecast Scatter Plot",status="primary",solidHeader=TRUE, collapsible=TRUE,
+                      showOutput("forecasterrorscatter", "highcharts"),
+                      HTML('<style>.rChart {width: 100%; height: 600px}</style>')
+                  )
+                ),
+                fluidRow(
+                  box(title="Error Plot",status="primary",solidHeader=TRUE, collapsible=TRUE,
+                      showOutput("mescatter", "highcharts"),
+                      HTML('<style>.rChart {width: 100%; height: 600px}</style>')
+                  ),
+                  box(title="Forecast Error Plot",status="primary",solidHeader=TRUE, collapsible=TRUE,
+                      showOutput("forecastmescatter", "highcharts"),
+                      HTML('<style>.rChart {width: 100%; height: 600px}</style>')
+                  )
+                )
+        ),
+        tabItem(tabName = "smooth",
+                fluidRow(
+                  box(title="Smoothing Variables",status="primary",width=11,solidHeader=F, collapsible=TRUE,
+                      checkboxInput("removeoutlierssm", label="Remove Outliers",value = T),
+                      checkboxInput("decomposesm", label="Decompose",value = T),
+                      
+                      selectInput("smoothmethodin", label="Method:", choices =c("Non Linear Smooth"="nonlinearsmooth", "Simple Moving Average"="KMO")),
+                      conditionalPanel(
+                        condition = "input.smoothmethodin == 'KMO'",
+                        sliderInput("imain", "Moving Average Variable:",min = 3, max = 12, value = 4))
+                  )),
+                fluidRow(
+                  column(width=4,
+                         
+                         fluidRow(box(title="Table",width=12,status="primary",solidHeader=TRUE, collapsible=TRUE,
+                                      div(style = 'overflow-x: scroll', dataTableOutput("smtab2"))
+                         ))
+                  ),
+                  
+                  column(width=7,
+                         box(title="Plot",width=12,status="primary",solidHeader=TRUE, collapsible=TRUE,
+                             
+                             showOutput("plotsm", "highcharts"),
+                             HTML('<style>.rChart {width: 100%; height: 600px}</style>')
+                         ))),
+                fluidRow()),
+        tabItem(tabName = "tempag",
+                fluidRow(column(width=4,
+                                
+                                box(title="Table",width=12,status="primary",solidHeader=F, collapsible=TRUE,
+                                    div(style = 'overflow-x: scroll', dataTableOutput('taggtable')))),
+                         column(width=8,
+                                box(title="Plot",width=12,status="primary",solidHeader=TRUE, collapsible=TRUE,
+                                    showOutput("taggplot", "highcharts"),
+                                    HTML('<style>.rChart {width: 100%; height: 600px}</style>'))))
+        ),
+        tabItem(tabName="judge",
+                fluidRow(column(width=6,
+                                box( title="Judgemental Forecasts Variable",width=12,status="primary", solidHeader = F, uiOutput("sliders"))
+                ),
+                (column(width=6,
+                        box( title="Judgemental Forecasts ",width=12,status="primary",solidHeader = TRUE,checkboxInput('usejudgemental', 'Use Judgemental Forecasts', TRUE),  showOutput("judgeplot", "highcharts"), tags$head(tags$script(src="draggable-points.js")),tags$head(tags$script(src="export-csv.js"))
+                        ,
+                             HTML('<style>.rChart {width: 100%; height: 600px}</style>'),
+                             div(style = 'overflow-x: scroll', tableOutput("judgetable")),tableOutput("testjtable"))
+                )))
+                # submitButton("Submit")       
+        ),
+        tabItem(tabName="export",
+        fluidRow(column(width=6,
+                        box( title="Report Variables",width=12,status="primary", solidHeader = F, 
+                             textInput("reportitle", "Report Title", "Timeseries Forecasting"),
+                             radioButtons('format', 'Document format', c('PDF', 'HTML', 'Word'), inline = TRUE),
+                             downloadButton('downloadReport'))
+        ),
+        (column(width=6,
+                box( title="File Preview",width=12,status="primary",solidHeader = TRUE
+                )
+        )))
+        # submitButton("Submit")       
+)
+        
+      )
+    )
+  )
+)
